@@ -20,7 +20,7 @@
 
 `updater.py` проверяет `releases/latest` на GitHub, скачивает новый exe, сверяет SHA-256 (поле `digest` ассета GitHub или `SHA256SUMS.txt`), переименовывает запущенный exe в `.old`, кладёт новый на его место и перезапускает. `.old` удаляется при следующем запуске.
 
-Выпуск версии: поднять `__version__` в `driverupdater/__init__.py` (и `pyproject.toml`, `packaging/version_info.txt`), обновить `RELEASE_NOTES.md`, поставить тег `vX.Y.Z` и отправить его — GitHub Actions соберёт exe, проверит, что тег совпадает с версией, и опубликует релиз.
+Выпуск версии: поднять `__version__` в `driverupdater/__init__.py` (и `pyproject.toml`, `packaging/version_info.txt`), обновить `RELEASE_NOTES.md` и отправить коммит в основную ветку. GitHub Actions соберёт exe и, если релиза `vX.Y.Z` ещё нет, сам создаст тег и опубликует релиз с `DriverUpdater.exe`, `DriverUpdater-cli.exe` и `SHA256SUMS.txt`. Можно и вручную поставить тег `vX.Y.Z` — тогда сборка проверит, что он совпадает с версией.
 
 ## Запуск из исходников
 

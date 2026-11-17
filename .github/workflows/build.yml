@@ -36,11 +36,24 @@ jobs:
       - name: Unit tests
         run: python -m unittest discover -s tests -t . -v
 
-      - name: Check version matches tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      # Релиз выпускается сам, когда в driverupdater/__init__.py повышена версия:
+      # сборка на основной ветке видит, что релиза vX.Y.Z ещё нет, и публикует его.
+      - name: Decide whether to publish a release
+        id: rel
         run: |
           $v = python -c "import driverupdater; print(driverupdater.__version__)"
-          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} != version $v" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          if ("${{ github.ref_type }}" -eq "tag") {
+            if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} != version $v" }
+            $publish = $true
+          } else {
+            $exists = git ls-remote --tags origin "refs/tags/v$v"
+            $onDefault = "${{ github.ref_name }}" -eq "${{ github.event.repository.default_branch }}"
+            $event = "${{ github.event_name }}"
+            $publish = $onDefault -and ($event -eq "push" -or $event -eq "workflow_dispatch") -and -not $exists
+          }
+          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          Write-Host "version=$v publish=$publish"
 
       - name: Build exe
         run: python -m PyInstaller --noconfirm --clean packaging/DriverUpdater.spec
@@ -94,10 +107,13 @@ jobs:
             scan.json
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.rel.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: DriverUpdater ${{ github.ref_name }}
+          tag_name: v${{ steps.rel.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: DriverUpdater ${{ steps.rel.outputs.version }}
+          make_latest: "true"
           body_path: RELEASE_NOTES.md
           files: |
             dist/DriverUpdater.exe
