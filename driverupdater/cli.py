@@ -8,9 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import __version__, classify, hardware, installer, powershell, report
-from .models import Action, Assessment, Device, DriverOffer, Necessity, SystemInfo
-from .providers import catalog, windows_update
+from . import __version__, engine, installer, powershell, report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,74 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def log(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
-
-
-def gather_offers(args, system: SystemInfo, devices: list[Device]
-                  ) -> tuple[dict[str, DriverOffer], list[DriverOffer]]:
-    if args.offers_file:
-        raw = json.loads(Path(args.offers_file).read_text(encoding="utf-8-sig"))
-        offers = windows_update.parse_search(raw)
-    else:
-        log("Поиск драйверов в Windows Update (может занять пару минут)…")
-        try:
-            offers = windows_update.search()
-        except powershell.PowerShellError as e:
-            log(f"  Windows Update недоступен: {e}")
-            offers = []
-    by_device, unmatched = classify.match_offers(devices, offers)
-
-    if not args.no_catalog and not args.offers_file:
-        targets = []
-        for d in devices:
-            if d.instance_id in by_device or d.is_virtual:
-                continue
-            a = classify.assess(d, None)
-            wants = a.action != Action.NONE and a.necessity in (Necessity.REQUIRED, Necessity.RECOMMENDED)
-            deep = args.deep and classify.effective_class(d) in classify.RULES and d.hardware_ids
-            if wants or deep:
-                targets.append(d)
-        if targets:
-            log(f"Поиск в Microsoft Update Catalog для {len(targets)} устройств(а)…")
-        for d in targets:
-            off = catalog.find_for_device(d, system)
-            if off:
-                by_device[d.instance_id] = off
-    return by_device, unmatched
-
-
-def unmatched_assessments(offers: list[DriverOffer]) -> list[Assessment]:
-    out = []
-    for o in offers:
-        dev = Device(instance_id=o.hardware_id or o.update_id, name=o.title,
-                     device_class=o.driver_class, hardware_ids=[o.hardware_id])
-        out.append(Assessment(
-            dev, Necessity.OPTIONAL, Action.UPDATE,
-            "Windows Update предлагает этот драйвер, но соответствующее устройство сейчас не "
-            "активно (отключено или не подключено) — ставить не обязательно.",
-            offer=o, auto_install=not o.is_firmware))
-    return out
-
-
-def select_plan(items: list[Assessment], include_optional: bool, allow_firmware: bool) -> list[Assessment]:
-    allowed = {Necessity.REQUIRED, Necessity.RECOMMENDED}
-    if include_optional:
-        allowed.add(Necessity.OPTIONAL)
-    plan = [a for a in items
-            if a.offer and a.action != Action.NONE and a.necessity in allowed
-            and (a.auto_install or allow_firmware)]
-    # Сначала чипсет и системные устройства, затем остальное — так советуют производители.
-    order = {"System": 0, "HDC": 1, "SCSIAdapter": 1, "Display": 2, "Net": 3}
-    plan.sort(key=lambda a: (order.get(classify.effective_class(a.device, a.offer), 9),
-                             a.necessity.rank))
-    # Один пакет может подходить к нескольким устройствам — ставим один раз.
-    seen, unique = set(), []
-    for a in plan:
-        key = (a.offer.source, a.offer.update_id)  # type: ignore[union-attr]
-        if key not in seen:
-            seen.add(key)
-            unique.append(a)
-    return unique
+    if sys.stderr:
+        print(msg, file=sys.stderr, flush=True)
 
 
 def confirm(question: str) -> bool:
@@ -139,18 +71,15 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:
-        system, devices = hardware.scan(args.from_file, args.save)
+        if args.command == "scan":
+            res = engine.scan(args.from_file, args.save)
+        else:
+            res = engine.check(args.from_file, args.save, offers_file=args.offers_file,
+                               use_catalog=not args.no_catalog, deep=args.deep, log=log)
     except (powershell.PowerShellError, OSError, ValueError) as e:
         log(f"Ошибка сканирования: {e}")
         return 2
-
-    offers: dict[str, DriverOffer] = {}
-    extra: list[Assessment] = []
-    if args.command in ("check", "install"):
-        offers, unmatched = gather_offers(args, system, devices)
-        extra = unmatched_assessments(unmatched)
-
-    items = classify.assess_all(devices, offers, searched=args.command != "scan") + extra
+    system, items = res.system, res.items
 
     if args.json:
         print(json.dumps({"system": system.__dict__, "devices": [a.to_dict() for a in items]},
@@ -162,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command != "install":
         return 0
 
-    plan = select_plan(items, args.include_optional, args.allow_firmware)
+    plan = engine.select_plan(items, args.include_optional, args.allow_firmware)
     report.print_plan(plan)
     if not plan or args.dry_run:
         return 0

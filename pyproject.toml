@@ -9,8 +9,14 @@ description = "Определение железа ПК, поиск и уста�
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+gui = ["PySide6-Essentials>=6.5"]
+
 [project.scripts]
 driverupdater = "driverupdater.cli:main"
+
+[project.gui-scripts]
+driverupdater-gui = "driverupdater.gui.app:main"
 
 [tool.setuptools.packages.find]
 include = ["driverupdater*"]

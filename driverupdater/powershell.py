@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +15,10 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 """
+
+
+# В графической версии не даём дочерним процессам открывать чёрные окна консоли.
+NO_WINDOW = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 
 
 class PowerShellError(RuntimeError):
@@ -38,13 +44,22 @@ def run(script: str, timeout: int = 600) -> str:
     proc = subprocess.run(
         [_exe(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
          "-EncodedCommand", encoded],
-        capture_output=True, timeout=timeout,
+        capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, **NO_WINDOW,
     )
     out = proc.stdout.decode("utf-8", errors="replace")
     if proc.returncode != 0:
-        err = proc.stderr.decode("utf-8", errors="replace") or out
+        err = _clean_error(proc.stderr.decode("utf-8", errors="replace")) or out
         raise PowerShellError(err.strip()[-2000:])
     return out
+
+
+def _clean_error(text: str) -> str:
+    """При -EncodedCommand ошибки приходят в XML-обёртке CLIXML — достаём из неё текст."""
+    if "#< CLIXML" not in text:
+        return text
+    parts = re.findall(r'<S S="Error">(.*?)</S>', text, re.S)
+    msg = "".join(parts).replace("_x000D_", "").replace("_x000A_", "\n")
+    return html.unescape(msg)
 
 
 def run_json(script: str, timeout: int = 600):

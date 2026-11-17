@@ -81,7 +81,7 @@ def create_restore_point() -> None:
 
 def backup_drivers(target: str) -> None:
     Path(target).mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(["pnputil", "/export-driver", "*", target], capture_output=True)
+    proc = subprocess.run(["pnputil", "/export-driver", "*", target], capture_output=True, **powershell.NO_WINDOW)
     if proc.returncode not in (0, PNP_REBOOT):
         raise RuntimeError(_console(proc.stdout)[-1000:])
 
@@ -122,7 +122,7 @@ def download(url: str, dest_dir: Path) -> Path:
 
 def expand_cab(cab: Path, dest: Path, depth: int = 0) -> None:
     dest.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(["expand.exe", str(cab), "-F:*", str(dest)], capture_output=True)
+    proc = subprocess.run(["expand.exe", str(cab), "-F:*", str(dest)], capture_output=True, **powershell.NO_WINDOW)
     if proc.returncode != 0:
         raise RuntimeError(f"не удалось распаковать {cab.name}")
     if depth < 2:  # в каталоге встречаются вложенные .cab
@@ -134,7 +134,7 @@ def expand_cab(cab: Path, dest: Path, depth: int = 0) -> None:
 def pnputil_install(folder: Path) -> tuple[int, str]:
     proc = subprocess.run(
         ["pnputil", "/add-driver", str(folder / "*.inf"), "/subdirs", "/install"],
-        capture_output=True)
+        capture_output=True, **powershell.NO_WINDOW)
     return proc.returncode, _console(proc.stdout)
 
 

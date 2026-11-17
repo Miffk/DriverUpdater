@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from driverupdater import classify, cli, hardware, installer
+from driverupdater import classify, cli, engine, hardware, installer
 from driverupdater.models import Action, Device, DriverOffer, Necessity, SystemInfo
 from driverupdater.providers import catalog, windows_update
 from driverupdater.versions import is_newer, normalize_date, parse_version
@@ -91,12 +91,12 @@ class ClassifyTests(unittest.TestCase):
 
     def test_plan_selection(self):
         items = list(self.items.values())
-        plan = cli.select_plan(items, include_optional=False, allow_firmware=False)
+        plan = engine.select_plan(items, include_optional=False, allow_firmware=False)
         names = [a.device.name for a in plan]
         self.assertEqual(names[0], "AMD SMBus")  # чипсет первым
         self.assertIn("Microsoft Basic Display Adapter", names)
         self.assertNotIn("System Firmware", names)
-        with_fw = cli.select_plan(items, include_optional=True, allow_firmware=True)
+        with_fw = engine.select_plan(items, include_optional=True, allow_firmware=True)
         self.assertIn("System Firmware", [a.device.name for a in with_fw])
 
 
