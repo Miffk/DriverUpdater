@@ -1,0 +1,20 @@
+[
+  {"update_id": "b1f0f2a8-0000-4000-8000-000000000001", "title": "NVIDIA - Display - 31.0.15.5222",
+   "hardware_id": "PCI\\VEN_10DE&DEV_2504&SUBSYS_397D1462", "provider": "NVIDIA", "manufacturer": "NVIDIA",
+   "driver_class": "Display", "date": "2024-03-07", "size_bytes": 812345678, "reboot_behavior": 0, "browse_only": false},
+  {"update_id": "b1f0f2a8-0000-4000-8000-000000000002", "title": "Intel(R) Corporation - Net - 23.20.0.4",
+   "hardware_id": "PCI\\VEN_8086&DEV_2723&SUBSYS_00848086", "provider": "Intel", "manufacturer": "Intel",
+   "driver_class": "Net", "date": "2024-01-15", "size_bytes": 20123456, "reboot_behavior": 0, "browse_only": false},
+  {"update_id": "b1f0f2a8-0000-4000-8000-000000000003", "title": "Advanced Micro Devices, Inc - System - 5.12.0.44",
+   "hardware_id": "PCI\\VEN_1022&DEV_790B&SUBSYS_7C911462", "provider": "AMD", "manufacturer": "AMD",
+   "driver_class": "System", "date": "2023-10-02", "size_bytes": 102400, "reboot_behavior": 0, "browse_only": false},
+  {"update_id": "b1f0f2a8-0000-4000-8000-000000000004", "title": "Realtek Semiconductor Corp. - MEDIA - 6.0.9600.1",
+   "hardware_id": "HDAUDIO\\FUNC_01&VEN_10EC&DEV_1200&SUBSYS_1462D7C9", "provider": "Realtek", "manufacturer": "Realtek",
+   "driver_class": "MEDIA", "date": "2023-11-20", "size_bytes": 50331648, "reboot_behavior": 1, "browse_only": false},
+  {"update_id": "b1f0f2a8-0000-4000-8000-000000000005", "title": "Micro-Star International Co., Ltd. - Firmware - 193.0.0.0",
+   "hardware_id": "UEFI\\RES_{5B13A9C2-7A1F-4A6E-9C55-0D3E2A7F1B44}&REV_C0", "provider": "MSI", "manufacturer": "MSI",
+   "driver_class": "Firmware", "date": "2024-02-01", "size_bytes": 16777216, "reboot_behavior": 1, "browse_only": false},
+  {"update_id": "b1f0f2a8-0000-4000-8000-000000000006", "title": "Realtek - Net - 10.60.1.2022",
+   "hardware_id": "PCI\\VEN_10EC&DEV_8125&SUBSYS_7C911462", "provider": "Realtek", "manufacturer": "Realtek",
+   "driver_class": "Net", "date": "2022-06-01", "size_bytes": 1048576, "reboot_behavior": 0, "browse_only": false}
+]

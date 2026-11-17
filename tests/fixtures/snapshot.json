@@ -1,0 +1,115 @@
+{
+  "system": {
+    "manufacturer": "Micro-Star International Co., Ltd.",
+    "model": "MS-7C91",
+    "board": "Micro-Star International Co., Ltd. MAG B550 TOMAHAWK (MS-7C91)",
+    "bios": "American Megatrends International, LLC. A.C0 (2023-04-20)",
+    "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+    "ram_gb": 31.9,
+    "gpus": ["Microsoft Basic Display Adapter"],
+    "os_name": "Microsoft Windows 11 Pro",
+    "os_version": "10.0.22631",
+    "os_build": 22631,
+    "arch": "x64"
+  },
+  "devices": [
+    {
+      "instance_id": "PCI\\VEN_10DE&DEV_2504&SUBSYS_397D1462&REV_A1\\4&2283F625&0&0019",
+      "name": "Microsoft Basic Display Adapter",
+      "device_class": "Display",
+      "manufacturer": "(Standard display types)",
+      "hardware_ids": ["PCI\\VEN_10DE&DEV_2504&SUBSYS_397D1462&REV_A1", "PCI\\VEN_10DE&DEV_2504&SUBSYS_397D1462", "PCI\\VEN_10DE&DEV_2504&CC_030000"],
+      "compatible_ids": ["PCI\\VEN_10DE&DEV_2504&REV_A1", "PCI\\VEN_10DE&CC_0300"],
+      "problem_code": 0, "status": "OK",
+      "driver_version": "10.0.22621.1", "driver_date": "2006-06-21",
+      "driver_provider": "Microsoft", "inf_name": "display.inf", "is_signed": true
+    },
+    {
+      "instance_id": "PCI\\VEN_8086&DEV_2723&SUBSYS_00848086&REV_1A\\4&3B6E9C2&0&00E8",
+      "name": "Сетевой контроллер",
+      "device_class": "",
+      "manufacturer": "",
+      "hardware_ids": ["PCI\\VEN_8086&DEV_2723&SUBSYS_00848086&REV_1A", "PCI\\VEN_8086&DEV_2723&SUBSYS_00848086"],
+      "compatible_ids": ["PCI\\VEN_8086&CC_0280"],
+      "problem_code": 28, "status": "Error",
+      "driver_version": "", "driver_date": "", "driver_provider": "", "inf_name": "", "is_signed": null
+    },
+    {
+      "instance_id": "HDAUDIO\\FUNC_01&VEN_10EC&DEV_1200&SUBSYS_1462D7C9&REV_1000\\5&1A2B3C&0&0001",
+      "name": "High Definition Audio Device",
+      "device_class": "MEDIA",
+      "manufacturer": "Microsoft",
+      "hardware_ids": ["HDAUDIO\\FUNC_01&VEN_10EC&DEV_1200&SUBSYS_1462D7C9&REV_1000", "HDAUDIO\\FUNC_01&VEN_10EC&DEV_1200&SUBSYS_1462D7C9"],
+      "compatible_ids": [],
+      "problem_code": 0, "status": "OK",
+      "driver_version": "10.0.22621.2506", "driver_date": "2006-06-21",
+      "driver_provider": "Microsoft", "inf_name": "hdaudio.inf", "is_signed": true
+    },
+    {
+      "instance_id": "PCI\\VEN_1022&DEV_790B&SUBSYS_7C911462&REV_61\\3&11583659&0&A0",
+      "name": "AMD SMBus",
+      "device_class": "System",
+      "manufacturer": "Advanced Micro Devices, Inc",
+      "hardware_ids": ["PCI\\VEN_1022&DEV_790B&SUBSYS_7C911462&REV_61", "PCI\\VEN_1022&DEV_790B&SUBSYS_7C911462"],
+      "compatible_ids": [],
+      "problem_code": 0, "status": "OK",
+      "driver_version": "5.12.0.38", "driver_date": "2021-08-11",
+      "driver_provider": "Advanced Micro Devices, Inc", "inf_name": "oem12.inf", "is_signed": true
+    },
+    {
+      "instance_id": "PCI\\VEN_10EC&DEV_8125&SUBSYS_7C911462&REV_05\\01000000684CE00000",
+      "name": "Realtek Gaming 2.5GbE Family Controller",
+      "device_class": "Net",
+      "manufacturer": "Realtek",
+      "hardware_ids": ["PCI\\VEN_10EC&DEV_8125&SUBSYS_7C911462&REV_05", "PCI\\VEN_10EC&DEV_8125&SUBSYS_7C911462"],
+      "compatible_ids": [],
+      "problem_code": 0, "status": "OK",
+      "driver_version": "10.68.815.2023", "driver_date": "2023-08-15",
+      "driver_provider": "Realtek", "inf_name": "oem33.inf", "is_signed": true
+    },
+    {
+      "instance_id": "PCI\\VEN_1022&DEV_149C&SUBSYS_7C911462&REV_00\\4&1A1E8C5C&0&0341",
+      "name": "Расширяемый хост-контроллер USB 3.10 — 1.10 (Майкрософт)",
+      "device_class": "USB",
+      "manufacturer": "Стандартный расширяемый хост-контроллер USB",
+      "hardware_ids": ["PCI\\VEN_1022&DEV_149C&SUBSYS_7C911462&REV_00"],
+      "compatible_ids": [],
+      "problem_code": 0, "status": "OK",
+      "driver_version": "10.0.22621.2506", "driver_date": "2006-06-21",
+      "driver_provider": "Microsoft", "inf_name": "usbxhci.inf", "is_signed": true
+    },
+    {
+      "instance_id": "USB\\VID_046D&PID_0825\\1A2B3C4D",
+      "name": "Logitech HD Webcam C270",
+      "device_class": "Camera",
+      "manufacturer": "Microsoft",
+      "hardware_ids": ["USB\\VID_046D&PID_0825&REV_0012&MI_00"],
+      "compatible_ids": [],
+      "problem_code": 22, "status": "Error",
+      "driver_version": "10.0.22621.1", "driver_date": "2006-06-21",
+      "driver_provider": "Microsoft", "inf_name": "usbvideo.inf", "is_signed": true
+    },
+    {
+      "instance_id": "UEFI\\RES_{5B13A9C2-7A1F-4A6E-9C55-0D3E2A7F1B44}\\0",
+      "name": "System Firmware",
+      "device_class": "Firmware",
+      "manufacturer": "MSI",
+      "hardware_ids": ["UEFI\\RES_{5B13A9C2-7A1F-4A6E-9C55-0D3E2A7F1B44}&REV_C0"],
+      "compatible_ids": [],
+      "problem_code": 0, "status": "OK",
+      "driver_version": "192.0.0.0", "driver_date": "2023-04-20",
+      "driver_provider": "MSI", "inf_name": "oem50.inf", "is_signed": true
+    },
+    {
+      "instance_id": "SWD\\MMDEVAPI\\{0.0.0.00000000}.{A1B2C3D4}",
+      "name": "Динамики (High Definition Audio Device)",
+      "device_class": "AudioEndpoint",
+      "manufacturer": "Microsoft",
+      "hardware_ids": ["MMDEVAPI\\AudioEndpoints"],
+      "compatible_ids": [],
+      "problem_code": 0, "status": "OK",
+      "driver_version": "10.0.22621.1", "driver_date": "2006-06-21",
+      "driver_provider": "Microsoft", "inf_name": "audioendpoint.inf", "is_signed": true
+    }
+  ]
+}
