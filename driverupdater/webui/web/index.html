@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DriverUpdater</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <div class="app">
+    <!-- Шапка -->
+    <header class="hero">
+      <div class="ring" id="ring" data-state="loading">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <defs>
+            <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="var(--ring-a)"/>
+              <stop offset="1" stop-color="var(--ring-b)"/>
+            </linearGradient>
+          </defs>
+          <circle class="ring-track" cx="60" cy="60" r="52"/>
+          <circle class="ring-value" id="ringValue" cx="60" cy="60" r="52"/>
+        </svg>
+        <div class="ring-label">
+          <strong id="ringNumber">—</strong>
+          <span id="ringCaption">проверка</span>
+        </div>
+      </div>
+
+      <div class="hero-text">
+        <div class="brand">
+          <span class="logo" aria-hidden="true"></span>
+          <h1>DriverUpdater</h1>
+          <span class="badge badge-demo" id="demoBadge" hidden>демо-данные</span>
+        </div>
+        <p class="headline" id="headline">Определяю оборудование…</p>
+        <p class="status" id="status"><span class="pulse"></span><span id="statusText">Запуск</span></p>
+      </div>
+
+      <div class="hero-actions">
+        <button class="btn btn-ghost" id="btnRefresh" disabled>
+          <i data-icon="refresh"></i><span>Проверить снова</span>
+        </button>
+        <button class="btn btn-primary" id="btnInstall" disabled>
+          <i data-icon="download"></i><span id="btnInstallText">Установить</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Компьютер -->
+    <section class="system" id="system" aria-label="Ваш компьютер"></section>
+
+    <!-- Сводка -->
+    <section class="summary" id="summary" aria-label="Сводка"></section>
+
+    <!-- Панель инструментов -->
+    <section class="toolbar">
+      <label class="search">
+        <i data-icon="search"></i>
+        <input id="search" type="search" placeholder="Поиск устройства или ID оборудования" autocomplete="off">
+      </label>
+      <div class="toggles">
+        <label class="switch-row" title="Показать устройства, с которыми всё в порядке">
+          <input type="checkbox" id="optShowOk"><span class="switch"></span><span>Исправные</span>
+        </label>
+        <label class="switch-row" title="Искать в каталоге Microsoft обновления для всех важных устройств (дольше)">
+          <input type="checkbox" id="optDeep"><span class="switch"></span><span>Глубокий поиск</span>
+        </label>
+        <label class="switch-row" title="Перед установкой создать точку восстановления Windows">
+          <input type="checkbox" id="optRestore" checked><span class="switch"></span><span>Точка восстановления</span>
+        </label>
+        <button class="btn btn-icon" id="btnLog" title="Журнал"><i data-icon="log"></i></button>
+      </div>
+    </section>
+
+    <!-- Список -->
+    <main class="list" id="list" aria-live="polite"></main>
+
+    <footer class="foot">
+      <span><i data-icon="shield"></i> Только официальные источники Microsoft · проверка цифровой подписи · удаление установочных файлов после установки</span>
+      <span id="version"></span>
+    </footer>
+  </div>
+
+  <!-- Панель выбора -->
+  <div class="dock" id="dock" hidden>
+    <div class="dock-info">
+      <strong id="dockCount">0</strong>
+      <span id="dockText"></span>
+    </div>
+    <button class="btn btn-ghost btn-sm" id="dockClear">Снять все</button>
+    <button class="btn btn-primary" id="dockInstall"><i data-icon="download"></i><span>Установить</span></button>
+  </div>
+
+  <!-- Журнал -->
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <h3>Журнал</h3>
+      <button class="btn btn-icon" id="drawerClose" title="Закрыть"><i data-icon="x"></i></button>
+    </div>
+    <pre id="log"></pre>
+  </aside>
+
+  <!-- Экран установки -->
+  <div class="overlay" id="installer" hidden>
+    <div class="install-card">
+      <div class="install-head">
+        <div class="spinner-big" id="installSpinner"></div>
+        <div>
+          <h2 id="installTitle">Установка драйверов</h2>
+          <p id="installStep">Подготовка…</p>
+        </div>
+      </div>
+      <div class="bar"><span id="installBar"></span></div>
+      <ul class="install-list" id="installList"></ul>
+      <div class="install-foot" id="installFoot">
+        <span class="warn"><i data-icon="alert"></i> Не выключайте компьютер до окончания установки</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Диалог -->
+  <div class="overlay" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-icon" id="modalIcon"></div>
+      <h2 id="modalTitle"></h2>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-actions" id="modalActions"></div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="icons.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

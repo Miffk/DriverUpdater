@@ -7,9 +7,13 @@
 
 from __future__ import annotations
 
+import re
+
 from .. import powershell
 from ..models import DriverOffer
 from ..versions import normalize_date
+
+VERSION_RE = re.compile(r"(?<![\d.])(\d+\.\d+(?:\.\d+){1,2})(?![\d.])")
 
 SEARCH_SCRIPT = r"""
 $session  = New-Object -ComObject Microsoft.Update.Session
@@ -103,10 +107,10 @@ def parse_search(items: list[dict] | None) -> list[DriverOffer]:
 
 
 def _version_from_title(title: str) -> str:
-    """WUA не отдаёт версию драйвера отдельно, но почти всегда пишет её в конце заголовка:
-    'NVIDIA - Display - 31.0.15.5222'."""
-    tail = title.rsplit(" - ", 1)[-1].strip()
-    return tail if tail and tail[0].isdigit() and "." in tail else ""
+    """WUA не отдаёт версию драйвера отдельно, но пишет её в заголовке. Встречаются оба формата:
+    'NVIDIA - Display - 31.0.15.5222' и 'Intel net Driver Update (24.20.0.4)'."""
+    found = VERSION_RE.findall(title)
+    return found[-1] if found else ""
 
 
 def search() -> list[DriverOffer]:

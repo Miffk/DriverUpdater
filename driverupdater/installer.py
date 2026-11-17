@@ -38,6 +38,19 @@ class InstallResult:
     ok: bool
     message: str
     reboot: bool = False
+    key: str = ""  # источник:идентификатор пакета — по нему интерфейс находит строку
+
+
+def offer_key(a: Assessment) -> str:
+    return f"{a.offer.source}:{a.offer.update_id}" if a.offer else ""
+
+
+# progress(key, state, message): state — "running" | "ok" | "error" | "cleanup"
+Progress = Callable[[str, str, str], None]
+
+
+def _no_progress(key: str, state: str, message: str) -> None:
+    pass
 
 
 @dataclass
@@ -188,10 +201,16 @@ def remove_workspace(workspace: Path, report: Report) -> None:
         report.cleaned_paths.append(str(workspace))
 
 
-def install(plan: list[Assessment], log: Log = print) -> Report:
+def install(plan: list[Assessment], log: Log = print, progress: Progress = _no_progress) -> Report:
     """Устанавливает драйверы из плана. Временные файлы удаляются в любом случае,
     даже если установка прервалась с ошибкой."""
     report = Report()
+
+    def done(a: Assessment | None, res: InstallResult) -> None:
+        res.key = offer_key(a) if a else res.key
+        report.results.append(res)
+        progress(res.key, "ok" if res.ok else "error", res.message)
+
     started = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     workspace = Path(tempfile.mkdtemp(prefix="DriverUpdater_"))
     try:
@@ -201,29 +220,37 @@ def install(plan: list[Assessment], log: Log = print) -> Report:
         if wu:
             log(f"\n[Windows Update] установка {len(wu)} драйвер(ов)…")
             by_id = {a.offer.update_id: a for a in wu}  # type: ignore[union-attr]
+            for a in wu:  # Windows Update ставит пакеты одной пачкой
+                progress(offer_key(a), "running", "скачивание и установка через Windows Update")
             try:
-                for r in windows_update.install(list(by_id)):
-                    a = by_id.get(r["update_id"])
+                results = windows_update.install(list(by_id))
+                for r in results:
+                    a = by_id.pop(r["update_id"], None)
                     ok = r["result_code"] in (2, 3)
                     msg = "установлен" if ok else f"ошибка 0x{r['hresult'] & 0xFFFFFFFF:08X}"
-                    report.results.append(InstallResult(
-                        a.device.name if a else r["title"], ok, msg, r["reboot_required"]))
+                    done(a, InstallResult(a.device.name if a else r["title"], ok, msg,
+                                          r["reboot_required"], key=f"windows_update:{r['update_id']}"))
                     log(f"  {'✔' if ok else '✘'} {r['title']}: {msg}")
+                for a in by_id.values():  # Windows Update уже не предлагает этот пакет
+                    done(a, InstallResult(a.device.name, False,
+                                          "пакет больше не предлагается Windows Update — повторите поиск"))
             except powershell.PowerShellError as e:
-                for a in wu:
-                    report.results.append(InstallResult(a.device.name, False, str(e)[:300]))
+                for a in by_id.values():
+                    done(a, InstallResult(a.device.name, False, str(e)[:300]))
                 log(f"  ✘ Windows Update: {e}")
 
         for a in cat:
             log(f"\n[Update Catalog] {a.device.name}")
+            progress(offer_key(a), "running", "скачивание из каталога Microsoft")
             try:
                 res = install_from_catalog(a, workspace, log)
             except (RuntimeError, OSError, powershell.PowerShellError) as e:
                 res = InstallResult(a.device.name, False, str(e)[:300])
-            report.results.append(res)
+            done(a, res)
             log(f"  {'✔' if res.ok else '✘'} {res.message}")
     finally:
         log("\nУдаление установочных файлов…")
+        progress("", "cleanup", "удаление установочных файлов")
         remove_workspace(workspace, report)
         if any(a.offer and a.offer.source == "windows_update" for a in plan):
             try:

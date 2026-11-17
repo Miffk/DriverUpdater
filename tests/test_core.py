@@ -131,6 +131,10 @@ class InstallerTests(unittest.TestCase):
     def test_wu_title_version(self):
         self.assertEqual(windows_update._version_from_title("NVIDIA - Display - 31.0.15.5222"), "31.0.15.5222")
         self.assertEqual(windows_update._version_from_title("Some driver"), "")
+        # Новый формат названий в Windows Update / каталоге Microsoft (проверено вживую)
+        self.assertEqual(windows_update._version_from_title("Intel net Driver Update (24.20.0.4)"), "24.20.0.4")
+        self.assertEqual(windows_update._version_from_title("Realtek - Extension - 10.0.22000.31270"),
+                         "10.0.22000.31270")
 
 
 class CliTests(unittest.TestCase):

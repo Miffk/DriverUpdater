@@ -120,6 +120,28 @@ def vendor_id(device: Device) -> str:
     return ""
 
 
+# Производители по PCI/USB Vendor ID — чтобы показать понятное имя вместо безликого
+# «Сетевой контроллер» или «Microsoft Basic Display Adapter».
+VENDOR_NAMES = {
+    "10DE": "NVIDIA", "1002": "AMD", "1022": "AMD", "8086": "Intel", "10EC": "Realtek",
+    "14E4": "Broadcom", "168C": "Qualcomm Atheros", "17CB": "Qualcomm", "14C3": "MediaTek",
+    "1B21": "ASMedia", "1969": "Qualcomm Atheros", "11AB": "Marvell", "144D": "Samsung",
+    "15B7": "SanDisk/WD", "1C5C": "SK hynix", "126F": "Silicon Motion", "1987": "Phison",
+    "1179": "Toshiba/Kioxia", "1E0F": "Kioxia", "8087": "Intel", "0BDA": "Realtek",
+    "046D": "Logitech", "045E": "Microsoft", "05AC": "Apple", "1532": "Razer", "1038": "SteelSeries",
+    "0B05": "ASUS", "1462": "MSI", "1458": "Gigabyte", "13D3": "IMC Networks", "04F2": "Chicony",
+    "0C45": "Microdia", "27C6": "Goodix", "06CB": "Synaptics", "138A": "Validity", "1D6B": "Linux Foundation",
+    "1106": "VIA", "1217": "O2 Micro", "5143": "Qualcomm", "1D17": "Zhaoxin",
+    "1B4B": "Marvell", "8564": "Transcend", "0781": "SanDisk", "0951": "Kingston",
+    "111D": "IDT", "14F1": "Conexant", "1102": "Creative", "1095": "Silicon Image",
+}
+
+
+def vendor_name(device: Device) -> str:
+    vid = vendor_id(device)
+    return VENDOR_NAMES.get(vid) or (VENDOR_PAGES.get(vid, ("",))[0])
+
+
 def vendor_hint(device: Device) -> str:
     info = VENDOR_PAGES.get(vendor_id(device))
     return f"{info[0]}: {info[1]}" if info else ""
@@ -165,9 +187,27 @@ def _rule(cls: str) -> ClassRule:
         "устройство работает; обновление по желанию"))
 
 
+INBOX_TITLES = {
+    "USB": "USB-контроллеры", "HIDClass": "Устройства ввода", "Keyboard": "Клавиатура",
+    "Mouse": "Мышь и тачпад", "Monitor": "Монитор", "DiskDrive": "Диск", "Volume": "Том диска",
+    "VolumeSnapshot": "Теневая копия тома", "CDROM": "Оптический привод", "Processor": "Процессор",
+    "Computer": "Компьютер", "SoftwareDevice": "Программное устройство",
+    "LegacyDriver": "Системный драйвер", "PrintQueue": "Очередь печати", "Printer": "Принтер",
+    "WPD": "Портативное устройство", "AudioEndpoint": "Аудиовыход/вход",
+    "SmartCardReader": "Считыватель смарт-карт", "Ports": "Порты COM/LPT",
+    "Image": "Камера/сканер", "UCM": "USB Type-C", "SecurityDevices": "Модуль безопасности (TPM)",
+}
+
+
+def class_title(cls: str) -> str:
+    """Понятное название класса устройства для интерфейса."""
+    return INBOX_TITLES.get(cls) or _rule(cls).title
+
+
 def assess(device: Device, offer: DriverOffer | None, searched: bool = True) -> Assessment:
     cls = effective_class(device, offer)
     rule = _rule(cls)
+    title = class_title(cls)
     hint = vendor_hint(device)
 
     def result(nec, act, reason, use_offer=True, auto=True):
@@ -186,7 +226,7 @@ def assess(device: Device, offer: DriverOffer | None, searched: bool = True) -> 
         why = DRIVER_PROBLEMS.get(device.problem_code, f"ошибка устройства (код {device.problem_code})")
         nec = Necessity.REQUIRED if rule.missing != Necessity.OPTIONAL else Necessity.OPTIONAL
         return result(nec, Action.INSTALL,
-                      f"{rule.title}: {why} — без драйвера устройство не работает.",
+                      f"{title}: {why} — без драйвера устройство не работает.",
                       auto=not firmware)
 
     # 2. Видеокарта на базовом драйвере Microsoft.
@@ -211,7 +251,7 @@ def assess(device: Device, offer: DriverOffer | None, searched: bool = True) -> 
         new = " от ".join(x for x in (offer.version, offer.date) if x)
         cur = " от ".join(x for x in (device.driver_version, device.driver_date) if x) or "нет"
         return result(nec, Action.UPDATE,
-                      f"{rule.title}: доступна версия {new} (сейчас {cur}) — {reason}.")
+                      f"{title}: доступна версия {new} (сейчас {cur}) — {reason}.")
 
     # 4. Всё в порядке.
     if cls in INBOX_CLASSES or device.is_virtual:
@@ -222,7 +262,7 @@ def assess(device: Device, offer: DriverOffer | None, searched: bool = True) -> 
         why = "работает на драйвере Microsoft из состава Windows, более нового официального не найдено."
     else:
         why = "драйвер установлен и работает; более новой версии в официальных источниках нет."
-    return result(Necessity.NOT_NEEDED, Action.NONE, f"{rule.title}: {why}", use_offer=False)
+    return result(Necessity.NOT_NEEDED, Action.NONE, f"{title}: {why}", use_offer=False)
 
 
 def match_offers(devices: list[Device], offers: list[DriverOffer]

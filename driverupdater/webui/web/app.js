@@ -1,0 +1,548 @@
+/* DriverUpdater — логика интерфейса.
+   Данные приходят из Python (bridge.py): вызовы pywebview.api.* и события window.__du.onEvent. */
+(function () {
+  'use strict';
+
+  const GROUPS = [
+    { key: 'required', title: 'Необходимо', hint: 'без них устройства не работают или работают плохо', stat: 'нужно установить' },
+    { key: 'recommended', title: 'Рекомендуется', hint: 'устройство работает, но обновление заметно полезно', stat: 'полезные обновления' },
+    { key: 'optional', title: 'Необязательно', hint: 'по желанию — польза небольшая', stat: 'можно пропустить' },
+    { key: 'not_needed', title: 'В порядке', hint: 'ничего делать не нужно', stat: 'устройств без проблем' },
+  ];
+  const GROUP_BY_KEY = Object.fromEntries(GROUPS.map((g) => [g.key, g]));
+
+  const S = {
+    info: null, system: null, deviceCount: 0, items: [], byId: new Map(),
+    searched: false, busy: true, selected: new Set(), open: new Set(),
+    filter: 'all', query: '', installing: false, install: null,
+  };
+
+  // ───────── утилиты ─────────
+  const $ = (id) => document.getElementById(id);
+  const api = () => (window.pywebview && window.pywebview.api) || null;
+
+  function h(tag, props, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props || {})) {
+      if (v == null || v === false) continue;
+      if (k === 'class') el.className = v;
+      else if (k === 'html') el.innerHTML = v; // только для собственных SVG-иконок
+      else if (k === 'style') el.style.cssText = v;
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? '' : v);
+    }
+    for (const kid of kids.flat()) {
+      if (kid == null || kid === false) continue;
+      el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+    }
+    return el;
+  }
+  const icon = (name, cls) => {
+    const t = document.createElement('template');
+    t.innerHTML = Icons.svg(name, cls);
+    return t.content.firstChild;
+  };
+
+  function plural(n, one, few, many) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+    return many;
+  }
+  function fmtSize(n) {
+    if (!n) return '';
+    const u = ['Б', 'КБ', 'МБ', 'ГБ'];
+    let i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n.toFixed(0) : n.toFixed(n < 10 ? 1 : 0)) + ' ' + u[i];
+  }
+  const fmtDate = (d) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d.split('-').reverse().join('.') : d || '');
+  const verDate = (v, d) => [v, d ? 'от ' + fmtDate(d) : ''].filter(Boolean).join(' ');
+
+  function toast(text, kind) {
+    const colors = { error: 'var(--red)', ok: 'var(--green)', warn: 'var(--amber)' };
+    const el = h('div', { class: 'toast', style: '--c:' + (colors[kind] || 'var(--accent)') },
+      icon(kind === 'error' ? 'alert' : kind === 'ok' ? 'check' : 'info'), h('div', {}, text));
+    $('toasts').append(el);
+    setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 6000);
+  }
+
+  function log(line) {
+    const pre = $('log');
+    pre.textContent += line + '\n';
+    if (pre.textContent.length > 200000) pre.textContent = pre.textContent.slice(-150000);
+    pre.scrollTop = pre.scrollHeight;
+  }
+
+  function setStatus(text, mode) {
+    $('statusText').textContent = text;
+    $('status').className = 'status' + (mode ? ' ' + mode : '');
+  }
+
+  // ───────── шапка и кольцо ─────────
+  function counts() {
+    const c = { required: 0, recommended: 0, optional: 0, not_needed: 0 };
+    for (const it of S.items) {
+      if (it.hidden) continue;
+      if (it.necessity !== 'not_needed' && it.action === 'none') c.not_needed++;
+      else c[it.necessity]++;
+    }
+    return c;
+  }
+
+  function renderHero() {
+    const ring = $('ring');
+    if (!S.searched) {
+      ring.dataset.state = 'loading';
+      $('ringNumber').textContent = S.deviceCount || '—';
+      $('ringCaption').textContent = S.deviceCount ? plural(S.deviceCount, 'устройство', 'устройства', 'устройств') : 'проверка';
+      $('ringValue').style.strokeDashoffset = '';
+      $('headline').textContent = S.system
+        ? 'Ищу подходящие драйверы для ' + S.deviceCount + ' ' + plural(S.deviceCount, 'устройства', 'устройств', 'устройств') + '…'
+        : 'Определяю оборудование…';
+      return;
+    }
+    const c = counts();
+    const total = c.required + c.recommended + c.optional + c.not_needed || 1;
+    const issues = c.required + c.recommended;
+    const pct = Math.round(100 * (total - issues) / total);
+    ring.dataset.state = c.required ? 'bad' : c.recommended ? 'warn' : 'good';
+    $('ringNumber').textContent = pct + '%';
+    $('ringCaption').textContent = 'в порядке';
+    requestAnimationFrame(() => { $('ringValue').style.strokeDashoffset = String(326.7 * (1 - pct / 100)); });
+
+    let text;
+    if (c.required) text = 'Нужно установить ' + c.required + ' ' + plural(c.required, 'драйвер', 'драйвера', 'драйверов') + ' — без них часть устройств не работает';
+    else if (c.recommended) text = 'Всё работает, но есть ' + c.recommended + ' ' + plural(c.recommended, 'полезное обновление', 'полезных обновления', 'полезных обновлений');
+    else if (c.optional) text = 'Всё в порядке. Есть ' + c.optional + ' ' + plural(c.optional, 'необязательное обновление', 'необязательных обновления', 'необязательных обновлений');
+    else text = 'Все драйверы в порядке — устанавливать ничего не нужно';
+    $('headline').textContent = text;
+  }
+
+  // ───────── карточки компьютера ─────────
+  function renderSystem() {
+    const box = $('system');
+    box.replaceChildren();
+    const s = S.system;
+    if (!s) {
+      for (let i = 0; i < 6; i++) box.append(h('div', { class: 'skeleton short' }));
+      return;
+    }
+    const specs = [
+      ['pc', 'Компьютер', [s.manufacturer, s.model].filter(Boolean).join(' ')],
+      ['cpu', 'Процессор', s.cpu],
+      ['gpu', (s.gpus || []).length > 1 ? 'Видеокарты' : 'Видеокарта', (s.gpus || []).join(', ')],
+      ['ram', 'Память', s.ram_gb ? s.ram_gb + ' ГБ' : ''],
+      ['board', 'Материнская плата', s.board],
+      ['windows', 'Система', s.os_name ? s.os_name.replace(/^Microsoft\s+/, '') + ' · сборка ' + s.os_build + ' · ' + s.arch : ''],
+    ];
+    specs.forEach(([ic, k, v], i) => {
+      box.append(h('div', { class: 'spec', style: 'animation-delay:' + i * 40 + 'ms', title: v || '' },
+        h('div', { class: 'tile' }, icon(ic)),
+        h('div', {}, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v || '—'))));
+    });
+  }
+
+  // ───────── сводка ─────────
+  function renderSummary() {
+    const box = $('summary');
+    box.replaceChildren();
+    const c = counts();
+    GROUPS.forEach((g, i) => {
+      const n = S.searched ? c[g.key] : '—';
+      box.append(h('button', {
+        class: 'stat c-' + g.key + (S.filter === g.key ? ' active' : ''),
+        style: 'animation-delay:' + i * 50 + 'ms',
+        disabled: !S.searched,
+        title: S.filter === g.key ? 'Показать все' : 'Показать только «' + g.title + '»',
+        onclick: () => { S.filter = S.filter === g.key ? 'all' : g.key; renderSummary(); renderList(); },
+      }, h('div', { class: 'n' }, n), h('div', { class: 't' }, g.title), h('div', { class: 'd' }, g.stat)));
+    });
+  }
+
+  // ───────── список ─────────
+  function visibleItems() {
+    const q = S.query.trim().toLowerCase();
+    const showOk = $('optShowOk').checked || S.filter === 'not_needed';
+    return S.items.filter((it) => {
+      const grp = groupOf(it);
+      if (S.filter !== 'all' && grp !== S.filter) return false;
+      if (grp === 'not_needed' && !showOk) return false;
+      if (it.hidden && !$('optShowOk').checked) return false;
+      const hay = [it.name, it.clsTitle, it.hwid, it.vendor, it.offer && it.offer.title].join(' ').toLowerCase();
+      if (q && !hay.includes(q)) return false;
+      return true;
+    });
+  }
+  const groupOf = (it) => (it.action === 'none' ? 'not_needed' : it.necessity);
+
+  function renderList() {
+    const list = $('list');
+    list.replaceChildren();
+    if (!S.searched) {
+      list.append(h('div', { class: 'group' },
+        h('div', { class: 'group-head' }, h('h3', {}, 'Поиск драйверов'),
+          h('span', { class: 'hint' }, 'Windows Update и каталог Microsoft — это может занять пару минут'))),
+        h('div', { class: 'cards' }, [0, 1, 2, 3].map((i) => h('div', { class: 'skeleton', style: 'animation-delay:' + i * 120 + 'ms' }))));
+      return;
+    }
+    const items = visibleItems();
+    const c = counts();
+    if (!items.length) {
+      const allGood = !c.required && !c.recommended && !c.optional && !S.query;
+      list.append(h('div', { class: 'empty' },
+        h('div', { class: 'big' }, icon(allGood ? 'check' : 'search')),
+        h('h3', {}, allGood ? 'Все драйверы в порядке' : 'Ничего не найдено'),
+        h('div', {}, allGood ? 'Для всех устройств установлены подходящие драйверы. Можно проверить снова позже.'
+          : 'Попробуйте изменить запрос или включите «Исправные».')));
+      return;
+    }
+    let delay = 0;
+    for (const g of GROUPS) {
+      const gi = items.filter((it) => groupOf(it) === g.key);
+      if (!gi.length) continue;
+      const selectable = gi.filter((it) => it.installable && !it.firmware);
+      const allOn = selectable.length && selectable.every((it) => S.selected.has(it.id));
+      list.append(h('section', { class: 'group c-' + g.key },
+        h('div', { class: 'group-head' },
+          h('span', { class: 'dot' }), h('h3', {}, g.title), h('span', { class: 'count' }, gi.length),
+          h('span', { class: 'hint' }, g.hint),
+          selectable.length > 1 ? h('button', {
+            class: 'link',
+            onclick: () => { selectable.forEach((it) => (allOn ? S.selected.delete(it.id) : S.selected.add(it.id))); renderList(); updateSelection(); },
+          }, allOn ? 'Снять все' : 'Выбрать все') : null),
+        h('div', { class: 'cards' }, gi.map((it) => deviceCard(it, g.key, Math.min(delay++ * 25, 400))))));
+    }
+  }
+
+  function deviceCard(it, grp, delay) {
+    const isOpen = S.open.has(it.id);
+    const sel = S.selected.has(it.id);
+    const cur = it.current;
+
+    const sub = h('div', { class: 'sub' },
+      it.vendor ? h('span', { class: 'vendor' }, it.vendor) : null,
+      it.vendor ? h('span', {}, '·') : null,
+      h('span', {}, it.clsTitle),
+      h('span', {}, '·'),
+      h('span', {}, cur ? verDate(cur.version, '') : 'нет драйвера'));
+    if (it.offer) sub.append(h('span', { class: 'arrow' }, '→'), h('span', { class: 'new' }, it.offer.version || fmtDate(it.offer.date) || 'новая версия'));
+    else if (it.action !== 'none') sub.append(h('span', { class: 'arrow' }, '→'), h('span', {}, 'в каталогах Microsoft не найден'));
+
+    const meta = h('div', { class: 'meta' });
+    if (it.problem && ![22, 24, 45].includes(it.problem)) meta.append(h('span', { class: 'chip warn' }, icon('alert'), 'ошибка, код ' + it.problem));
+    if (it.firmware && it.offer) meta.append(h('span', { class: 'chip warn' }, icon('firmware'), 'прошивка'));
+    if (it.offer) {
+      meta.append(h('span', { class: 'chip' }, it.offer.source));
+      if (it.offer.size) meta.append(h('span', { class: 'chip' }, fmtSize(it.offer.size)));
+      if (it.offer.reboot) meta.append(h('span', { class: 'chip note' }, icon('power'), 'перезагрузка'));
+    }
+
+    let ctl;
+    if (it.installable) {
+      const input = h('input', { type: 'checkbox', 'aria-label': 'Установить ' + it.name });
+      input.checked = sel;
+      input.disabled = S.busy;
+      input.addEventListener('change', () => toggleItem(it, input));
+      ctl = h('label', { class: 'switch-row', onclick: (e) => e.stopPropagation(), title: sel ? 'Будет установлен' : 'Не устанавливать' },
+        input, h('span', { class: 'switch' }));
+    } else if (it.hint) {
+      ctl = h('button', { class: 'btn btn-sm', onclick: (e) => { e.stopPropagation(); openUrl(it.hint.url); } }, icon('external'), 'Сайт');
+    }
+
+    const facts = h('dl', { class: 'facts' });
+    const fact = (k, v) => v && facts.append(h('dt', {}, k), h('dd', {}, v));
+    fact('Тип устройства', it.clsTitle);
+    fact('Производитель', it.vendor);
+    fact('Установлено', cur ? [verDate(cur.version, cur.date), cur.provider ? '(' + cur.provider + ')' : ''].join(' ') : 'драйвер отсутствует');
+    if (it.offer) {
+      fact('Будет установлено', it.offer.title);
+      fact('Источник', it.offer.source + (it.offer.size ? ' · ' + fmtSize(it.offer.size) : ''));
+    }
+    fact('ID оборудования', it.hwid);
+
+    const actions = h('div', { class: 'actions' });
+    if (it.hint) {
+      actions.append(h('button', { class: 'btn btn-sm', onclick: () => openUrl(it.hint.url) }, icon('external'),
+        (it.offer ? 'Самая свежая версия на сайте ' : 'Скачать с сайта ') + it.hint.name));
+    }
+
+    const card = h('article', {
+      class: 'dev c-' + grp + (isOpen ? ' open' : '') + (sel ? ' selected' : ''),
+      style: 'animation-delay:' + delay + 'ms',
+    },
+    h('div', {
+      class: 'dev-row', tabindex: '0', role: 'button', 'aria-expanded': String(isOpen),
+      onclick: () => toggleOpen(it.id, card),
+      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleOpen(it.id, card); } },
+    },
+    h('div', { class: 'tile' }, icon(Icons.forClass(it.cls))),
+    h('div', { style: 'min-width:0' }, h('div', { class: 'name', title: it.name }, it.name), sub),
+    meta,
+    h('div', { class: 'ctl' }, ctl || ''),
+    icon('chevron', 'chev')),
+    h('div', { class: 'dev-more' }, h('div', {},
+      h('div', { class: 'why' },
+        h('div', { class: 'label' }, icon('info'), 'Почему — ' + (GROUP_BY_KEY[grp] || {}).title),
+        h('p', {}, it.reason), facts, actions.childNodes.length ? actions : null))));
+    return card;
+  }
+
+  function toggleOpen(id, card) {
+    if (S.open.has(id)) S.open.delete(id); else S.open.add(id);
+    card.classList.toggle('open', S.open.has(id));
+    card.querySelector('.dev-row').setAttribute('aria-expanded', String(S.open.has(id)));
+  }
+
+  function toggleItem(it, input) {
+    if (input.checked && it.firmware) {
+      input.checked = false;
+      modal({
+        tone: 'required', iconName: 'firmware', title: 'Обновить прошивку?',
+        body: [h('p', {}, 'Это обновление прошивки (BIOS/UEFI или контроллера) для «' + it.name + '».'),
+          h('p', {}, 'Если во время прошивки пропадёт питание, компьютер может перестать включаться. ' +
+            'Ставьте её, только если знаете, зачем она нужна. Ноутбук держите на зарядке.')],
+        actions: [{ text: 'Отмена' }, {
+          text: 'Всё равно установить', kind: 'danger',
+          run: () => { S.selected.add(it.id); renderList(); updateSelection(); },
+        }],
+      });
+      return;
+    }
+    if (input.checked) S.selected.add(it.id); else S.selected.delete(it.id);
+    input.closest('.dev').classList.toggle('selected', input.checked);
+    updateSelection();
+  }
+
+  function selectedItems() {
+    return S.items.filter((it) => S.selected.has(it.id) && it.installable);
+  }
+
+  function updateSelection() {
+    const sel = selectedItems();
+    const uniq = new Map(sel.map((it) => [it.offer.key, it]));
+    const size = [...uniq.values()].reduce((s, it) => s + (it.offer.size || 0), 0);
+    const n = uniq.size;
+    $('btnInstallText').textContent = n ? 'Установить (' + n + ')' : 'Установить';
+    $('btnInstall').disabled = S.busy || !n;
+    $('btnRefresh').disabled = S.busy;
+    $('dock').hidden = S.busy || !n || !S.searched;
+    $('dockCount').textContent = n;
+    $('dockText').textContent = plural(n, 'драйвер выбран', 'драйвера выбрано', 'драйверов выбрано') + (size ? ' · примерно ' + fmtSize(size) : '');
+    $('optDeep').disabled = S.busy;
+  }
+
+  function renderAll() { renderHero(); renderSystem(); renderSummary(); renderList(); updateSelection(); }
+
+  // ───────── диалоги ─────────
+  function modal({ tone, iconName, title, body, actions }) {
+    const ov = $('modal');
+    const mi = $('modalIcon');
+    mi.className = 'modal-icon' + (tone ? ' c-' + tone : '');
+    mi.replaceChildren(icon(iconName || 'info'));
+    $('modalTitle').textContent = title;
+    $('modalBody').replaceChildren(...[].concat(body || []));
+    const box = $('modalActions');
+    box.replaceChildren();
+    (actions || [{ text: 'Понятно', kind: 'primary' }]).forEach((a) => {
+      const b = h('button', { class: 'btn ' + (a.kind === 'primary' ? 'btn-primary' : a.kind === 'danger' ? 'btn-danger' : '') },
+        a.icon ? icon(a.icon) : null, a.text);
+      b.addEventListener('click', () => { if (!a.keep) closeModal(); if (a.run) a.run(); });
+      box.append(b);
+    });
+    ov.hidden = false;
+    const last = box.lastElementChild;
+    if (last) last.focus();
+  }
+  const closeModal = () => { $('modal').hidden = true; };
+
+  function openUrl(url) { const a = api(); if (a) a.open_url(url); }
+
+  // ───────── действия ─────────
+  function start() {
+    const a = api();
+    if (!a) return;
+    S.searched = false;
+    S.busy = true;
+    S.filter = 'all';
+    renderAll();
+    a.start($('optDeep').checked).then((ok) => { if (!ok) toast('Подождите — предыдущая операция ещё идёт.', 'warn'); });
+  }
+
+  function askInstall() {
+    const sel = selectedItems();
+    const uniq = [...new Map(sel.map((it) => [it.offer.key, it])).values()];
+    if (!uniq.length) return;
+    const size = uniq.reduce((s, it) => s + (it.offer.size || 0), 0);
+    const restore = $('optRestore').checked;
+    modal({
+      tone: 'optional', iconName: 'download',
+      title: 'Установить ' + uniq.length + ' ' + plural(uniq.length, 'драйвер', 'драйвера', 'драйверов') + '?',
+      body: [
+        h('ul', {}, uniq.map((it) => h('li', {}, icon(Icons.forClass(it.cls)),
+          h('div', {}, it.name, h('small', {}, it.offer.title)), h('span', { class: 'sz' }, fmtSize(it.offer.size))))),
+        h('p', {}, (size ? 'Будет скачано примерно ' + fmtSize(size) + '. ' : '') +
+          (restore ? 'Перед установкой создадим точку восстановления Windows. ' : '') +
+          'После установки все скачанные файлы будут удалены.'),
+      ],
+      actions: [{ text: 'Отмена' }, { text: 'Установить', kind: 'primary', icon: 'download', run: () => doInstall(sel, restore) }],
+    });
+  }
+
+  function doInstall(sel, restore) {
+    api().install(sel.map((it) => it.id), restore).then((res) => {
+      if (res && res.ok) return;
+      const err = res && res.error;
+      if (err === 'admin') {
+        modal({
+          tone: 'recommended', iconName: 'shield', title: 'Нужны права администратора',
+          body: h('p', {}, 'Windows разрешает устанавливать драйверы только с правами администратора. Перезапустить программу с ними?'),
+          actions: [{ text: 'Отмена' }, { text: 'Перезапустить', kind: 'primary', run: () => api().relaunch_as_admin() }],
+        });
+      } else {
+        toast(err || 'Не удалось начать установку', 'error');
+      }
+    });
+  }
+
+  // ───────── экран установки ─────────
+  function showInstaller(keys) {
+    const byKey = new Map();
+    S.items.forEach((it) => { if (it.offer && !byKey.has(it.offer.key)) byKey.set(it.offer.key, it); });
+    S.install = { keys, done: 0, states: {} };
+    $('installTitle').textContent = 'Установка драйверов';
+    $('installStep').textContent = 'Подготовка…';
+    $('installSpinner').classList.remove('done');
+    $('installSpinner').replaceChildren();
+    $('installBar').style.width = '3%';
+    $('installList').replaceChildren(...keys.map((k) => {
+      const it = byKey.get(k);
+      return h('li', { 'data-key': k, 'data-state': 'pending' },
+        h('span', { class: 'st' }, icon('download')),
+        h('div', {}, h('div', { class: 'nm' }, it ? it.name : k),
+          h('div', { class: 'msg' }, it ? 'ожидает · ' + it.offer.title : 'ожидает')));
+    }));
+    $('installFoot').replaceChildren(h('span', { class: 'warn' }, icon('alert'), 'Не выключайте компьютер до окончания установки'));
+    $('installer').hidden = false;
+  }
+
+  function onProgress(d) {
+    if (!S.install) return;
+    if (d.state === 'cleanup') { $('installStep').textContent = 'Удаляю установочные файлы…'; return; }
+    const li = $('installList').querySelector('li[data-key="' + CSS.escape(d.key) + '"]');
+    if (!li) return;
+    li.dataset.state = d.state;
+    li.querySelector('.msg').textContent = d.message;
+    const st = li.querySelector('.st');
+    st.replaceChildren(d.state === 'ok' ? icon('check') : d.state === 'error' ? icon('x') : '');
+    if (d.state === 'running') $('installStep').textContent = li.querySelector('.nm').textContent + ' — ' + d.message;
+    if (d.state === 'ok' || d.state === 'error') S.install.states[d.key] = d.state;
+    const done = Object.keys(S.install.states).length;
+    $('installBar').style.width = Math.max(3, Math.round(100 * done / S.install.keys.length)) + '%';
+  }
+
+  function onInstallDone(d) {
+    $('installSpinner').classList.add('done');
+    $('installSpinner').replaceChildren(icon(d.okCount ? 'check' : 'x'));
+    $('installBar').style.width = '100%';
+    $('installTitle').textContent = d.okCount === d.total ? 'Готово!' : 'Установка завершена';
+    $('installStep').textContent = 'Успешно: ' + d.okCount + ' из ' + d.total +
+      (d.cleanedBytes ? ' · удалено установочных файлов: ' + fmtSize(d.cleanedBytes) : ' · установочные файлы удалены');
+    const foot = $('installFoot');
+    const finish = () => { $('installer').hidden = true; S.selected.clear(); start(); };
+    if (d.reboot) {
+      foot.replaceChildren(
+        h('span', { class: 'warn' }, icon('power'), 'Чтобы драйверы заработали, нужна перезагрузка'),
+        h('div', { style: 'display:flex;gap:8px' },
+          h('button', { class: 'btn', onclick: finish }, 'Позже'),
+          h('button', { class: 'btn btn-primary', onclick: () => { api().reboot(); toast('Компьютер перезагрузится через 10 секунд', 'warn'); } },
+            icon('power'), 'Перезагрузить')));
+    } else {
+      foot.replaceChildren(h('span', {}, ''), h('button', { class: 'btn btn-primary', onclick: finish }, icon('check'), 'Готово'));
+    }
+    S.install = null;
+  }
+
+  // ───────── события из Python ─────────
+  const handlers = {
+    phase: (d) => setStatus(d.text),
+    system: (d) => { S.system = d.system; S.deviceCount = d.count; renderHero(); renderSystem(); },
+    items: (d) => {
+      S.items = d.items;
+      S.byId = new Map(d.items.map((it) => [it.id, it]));
+      S.selected = new Set(d.items.filter((it) => it.selected).map((it) => it.id));
+      S.open.clear();
+      S.searched = true;
+    },
+    log: (d) => log(d.text),
+    error: (d) => {
+      setStatus('Ошибка: ' + d.message, 'error');
+      toast(d.message, 'error');
+      if (S.install || !$('installer').hidden) {
+        $('installStep').textContent = 'Ошибка: ' + d.message;
+        $('installFoot').replaceChildren(h('span', {}, ''), h('button', { class: 'btn', onclick: () => { $('installer').hidden = true; start(); } }, 'Закрыть'));
+        S.install = null;
+      }
+      if (!S.searched && S.system) { S.searched = true; }
+    },
+    idle: (d) => {
+      S.busy = false;
+      if (d.task === 'start' && !$('status').classList.contains('error')) {
+        setStatus('Проверка завершена · ' + new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }), 'idle');
+      }
+      renderAll();
+    },
+    install_started: (d) => { S.busy = true; updateSelection(); showInstaller(d.keys); },
+    progress: onProgress,
+    install_done: onInstallDone,
+    install_aborted: (d) => {
+      $('installer').hidden = true;
+      S.install = null;
+      modal({ tone: 'required', iconName: 'alert', title: 'Установка не начата', body: h('p', {}, d.message) });
+    },
+    close_blocked: () => toast('Идёт установка драйверов — дождитесь её окончания.', 'warn'),
+  };
+
+  window.__du = {
+    onEvent(ev) {
+      const fn = handlers[ev.type];
+      if (fn) {
+        try { fn(ev.data || {}); } catch (e) { console.error(e); }
+      }
+    },
+  };
+
+  // ───────── запуск ─────────
+  function bindUi() {
+    Icons.hydrate();
+    $('btnRefresh').addEventListener('click', start);
+    $('btnInstall').addEventListener('click', askInstall);
+    $('dockInstall').addEventListener('click', askInstall);
+    $('dockClear').addEventListener('click', () => { S.selected.clear(); renderList(); updateSelection(); });
+    $('btnLog').addEventListener('click', () => $('drawer').classList.add('open'));
+    $('drawerClose').addEventListener('click', () => $('drawer').classList.remove('open'));
+    $('optShowOk').addEventListener('change', renderList);
+    let t;
+    $('search').addEventListener('input', (e) => { clearTimeout(t); t = setTimeout(() => { S.query = e.target.value; renderList(); }, 120); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (!$('modal').hidden) closeModal();
+      else $('drawer').classList.remove('open');
+    });
+    $('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
+    renderAll();
+  }
+
+  async function init() {
+    const a = api();
+    S.info = await a.get_info();
+    $('version').textContent = 'версия ' + S.info.version;
+    $('demoBadge').hidden = !S.info.demo;
+    if (!S.info.isWindows && !S.info.demo) setStatus('Программа работает только в Windows', 'error');
+    start();
+  }
+
+  bindUi();
+  if (api() && api().get_info) init();
+  else window.addEventListener('pywebviewready', init, { once: true });
+})();
