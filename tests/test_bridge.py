@@ -101,6 +101,36 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(prog), 2 * len(ids))
         self.assertEqual((prog[0]["stage"], prog[0]["percent"]), ("download", 50.0))
 
+    def test_update_works_while_search_is_running(self):
+        # Случай с реального ПК: нажали «Обновить», пока шёл поиск драйверов.
+        b, events = make_bridge()
+        b._busy = True  # идёт поиск
+        b._update_info = {"available": True, "canAutoUpdate": True, "version": "9.9.9", "page": "https://x"}
+        with mock.patch("driverupdater.updater.apply", return_value="exe") as ap, \
+                mock.patch("driverupdater.updater.relaunch") as rl:
+            res = b.apply_update()
+        self.assertTrue(res["ok"])
+        ap.assert_called_once()
+        rl.assert_called_once_with("exe")
+        self.assertEqual([t for t, _ in events][-2:], ["update_ready", "quit"])
+
+    def test_update_blocked_during_driver_install_with_reason(self):
+        b, _ = make_bridge()
+        b._installing = True
+        b._update_info = {"available": True, "canAutoUpdate": True, "version": "9.9.9", "page": "https://x"}
+        res = b.apply_update()
+        self.assertFalse(res["ok"])
+        self.assertIn("устанавливаются драйверы", res["error"])
+
+    def test_update_failure_is_explained(self):
+        b, events = make_bridge()
+        b._update_info = {"available": True, "canAutoUpdate": True, "version": "9.9.9", "page": "https://x"}
+        with mock.patch("driverupdater.updater.apply", side_effect=RuntimeError("контрольная сумма не совпала")):
+            b.apply_update()
+        failed = [d for t, d in events if t == "update_failed"]
+        self.assertEqual(failed[0]["message"], "контрольная сумма не совпала")
+        self.assertFalse(b._updating)
+
     def test_open_url_only_https(self):
         b, _ = make_bridge()
         with mock.patch("webbrowser.open") as op:

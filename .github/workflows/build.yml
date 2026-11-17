@@ -14,6 +14,9 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 45
+    outputs:
+      publish: ${{ steps.rel.outputs.publish }}
+      version: ${{ steps.rel.outputs.version }}
     steps:
       - uses: actions/checkout@v5
 
@@ -119,3 +122,32 @@ jobs:
             dist/DriverUpdater.exe
             dist/DriverUpdater-cli.exe
             dist/SHA256SUMS.txt
+
+  # Проверка самообновления на настоящей Windows: берём ПРЕДЫДУЩИЙ релиз и обновляем его
+  # до только что опубликованного — так, как это сделает пользователь.
+  verify-update:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download previous release
+        run: |
+          $tags = gh release list -R ${{ github.repository }} --limit 2 --json tagName --jq '.[].tagName'
+          $prev = @($tags)[1]
+          if (-not $prev) { Write-Host "Предыдущего релиза нет — пропускаю"; exit 0 }
+          Write-Host "Предыдущая версия: $prev"
+          gh release download $prev -R ${{ github.repository }} -p DriverUpdater-cli.exe -D old
+          old\DriverUpdater-cli.exe --version
+
+      - name: Self-update previous version to the new one
+        run: |
+          if (-not (Test-Path old\DriverUpdater-cli.exe)) { exit 0 }
+          old\DriverUpdater-cli.exe self-update
+          if ($LASTEXITCODE -ne 0) { throw "self-update завершился с кодом $LASTEXITCODE" }
+          $v = (old\DriverUpdater-cli.exe --version) -join " "
+          Write-Host "После обновления: $v"
+          if ($v -notmatch [regex]::Escape("${{ needs.build.outputs.version }}")) { throw "ожидалась версия ${{ needs.build.outputs.version }}, получено: $v" }
+          Get-ChildItem old

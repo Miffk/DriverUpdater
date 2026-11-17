@@ -270,21 +270,40 @@ class Bridge:
         return {k: info[k] for k in ("available", "version", "notes", "page", "canAutoUpdate", "current")}
 
     def apply_update(self) -> dict:
+        """Обновление программы. Идёт отдельно от поиска драйверов: ждать конца поиска не нужно.
+        Нельзя только во время установки драйверов."""
         info = getattr(self, "_update_info", None)
         if not info or not info.get("available"):
-            return {"ok": False, "error": "Обновление не найдено — проверьте ещё раз."}
+            return {"ok": False, "error": "Новая версия не найдена. Перезапустите программу и попробуйте снова."}
+        if self._installing:
+            return {"ok": False, "error": "Сейчас устанавливаются драйверы. Обновите программу после окончания установки."}
         if not info.get("canAutoUpdate"):
             self.open_url(info["page"])
             return {"ok": True, "manual": True}
+        with self._lock:
+            if getattr(self, "_updating", False):
+                return {"ok": True, "already": True}
+            self._updating = True
+
+        def on_bytes(done: int, total: int) -> None:
+            pct = round(100 * done / total) if total else None
+            self._emit("update_progress", {"percent": pct, "done": done, "total": total})
 
         def job():
-            self._emit("phase", {"phase": "update", "text": f"Обновляю программу до версии {info['version']}…"})
-            exe = updater.apply(info, self._log)
-            self._emit("update_ready", {"version": info["version"]})
-            updater.relaunch(exe)
-            self._emit("quit", {})
+            try:
+                self._log(f"Обновление программы до версии {info['version']}")
+                exe = updater.apply(info, self._log, on_bytes)
+                self._emit("update_ready", {"version": info["version"]})
+                updater.relaunch(exe)
+                self._emit("quit", {})
+            except Exception as e:  # noqa: BLE001 — показать человеку причину
+                self._log(traceback.format_exc())
+                self._emit("update_failed", {"message": str(e) or type(e).__name__, "page": info.get("page", "")})
+            finally:
+                self._updating = False
 
-        return {"ok": self._task("update", job)}
+        self._spawn(job)
+        return {"ok": True}
 
     def open_url(self, url: str) -> bool:
         if not url.startswith("https://"):

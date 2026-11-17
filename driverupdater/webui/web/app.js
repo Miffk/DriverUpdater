@@ -60,9 +60,13 @@
   const verDate = (v, d) => [v, d ? 'от ' + fmtDate(d) : ''].filter(Boolean).join(' ');
 
   function toast(text, kind) {
+    for (const el of $('toasts').children) {
+      if (el.dataset.text === text && !el.classList.contains('out')) return; // такое сообщение уже на экране
+    }
     const colors = { error: 'var(--red)', ok: 'var(--green)', warn: 'var(--amber)' };
     const el = h('div', { class: 'toast', style: '--c:' + (colors[kind] || 'var(--accent)') },
       icon(kind === 'error' ? 'alert' : kind === 'ok' ? 'check' : 'info'), h('div', {}, text));
+    el.dataset.text = text;
     $('toasts').append(el);
     setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 6000);
   }
@@ -486,11 +490,23 @@
     });
   }
 
+  function setUpdateBusy(busy, text) {
+    $('updateApply').disabled = busy;
+    $('updateNotes').disabled = busy;
+    if (text) $('updateText').textContent = text;
+  }
+
   function applyUpdate() {
+    if ($('updateApply').disabled) return;
+    setUpdateBusy(true, 'Скачиваю новую версию…');
     api().apply_update().then((res) => {
-      if (res && res.manual) { toast('Открыл страницу загрузки новой версии в браузере.', 'ok'); return; }
-      if (res && res.ok) { S.busy = true; updateSelection(); $('updateBar').hidden = true; return; }
-      toast((res && res.error) || 'Не удалось обновить', 'error');
+      if (res && res.manual) { setUpdateBusy(false); toast('Открыл страницу загрузки новой версии в браузере.', 'ok'); return; }
+      if (res && res.ok) return; // дальше — события update_progress / update_ready / update_failed
+      setUpdateBusy(false, 'Вышла новая версия программы — ' + S.update.version + ' (у вас ' + S.update.current + ')');
+      toast((res && res.error) || 'Не удалось начать обновление', 'error');
+    }).catch((e) => {
+      setUpdateBusy(false);
+      toast('Не удалось начать обновление: ' + e, 'error');
     });
   }
 
@@ -698,7 +714,21 @@
       toast(d.message, d.ok ? 'ok' : 'error');
       if (d.ok) setTimeout(start, 500);
     },
-    update_ready: (d) => toast('Версия ' + d.version + ' установлена. Перезапускаю программу…', 'ok'),
+    update_progress: (d) => {
+      const size = d.total ? fmtSize(d.done) + ' из ' + fmtSize(d.total) : fmtSize(d.done);
+      setUpdateBusy(true, 'Скачиваю новую версию' + (d.percent != null ? ' · ' + d.percent + '%' : '') + ' · ' + size);
+    },
+    update_ready: (d) => {
+      setUpdateBusy(true, 'Версия ' + d.version + ' готова. Перезапускаю программу…');
+    },
+    update_failed: (d) => {
+      setUpdateBusy(false, 'Вышла новая версия программы — ' + S.update.version + ' (у вас ' + S.update.current + ')');
+      modal({
+        tone: 'required', iconName: 'alert', title: 'Не удалось обновить программу',
+        body: [h('p', {}, 'Причина: ' + d.message), h('p', {}, 'Можно скачать новую версию вручную со страницы релиза.')],
+        actions: [{ text: 'Закрыть' }, { text: 'Открыть страницу', kind: 'primary', icon: 'external', run: () => openUrl(d.page) }],
+      });
+    },
     close_blocked: () => toast('Идёт установка драйверов — дождитесь её окончания.', 'warn'),
   };
 

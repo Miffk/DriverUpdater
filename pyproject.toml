@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "driverupdater"
-version = "0.3.1"
+version = "0.3.2"
 description = "Определение железа ПК, поиск и установка драйверов из официальных источников Microsoft"
 requires-python = ">=3.10"
 dependencies = []

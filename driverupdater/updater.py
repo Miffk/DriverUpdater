@@ -102,7 +102,8 @@ def cleanup_old() -> None:
             pass
 
 
-def apply(info: dict, log: Callable[[str], None] = lambda _: None) -> Path:
+def apply(info: dict, log: Callable[[str], None] = lambda _: None,
+          on_bytes: Callable[[int, int], None] | None = None) -> Path:
     """Скачивает и подменяет exe. Возвращает путь к новому exe (его нужно запустить)."""
     exe = current_exe()
     a = info.get("asset")
@@ -119,9 +120,15 @@ def apply(info: dict, log: Callable[[str], None] = lambda _: None) -> Path:
     h = hashlib.sha256()
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=300) as resp, open(new, "wb") as fh:
-        while chunk := resp.read(1 << 20):
+        total = int(resp.headers.get("Content-Length") or 0) if hasattr(resp, "headers") else 0
+        total = total or int(a.get("size") or 0)
+        done = 0
+        while chunk := resp.read(1 << 18):
             h.update(chunk)
             fh.write(chunk)
+            done += len(chunk)
+            if on_bytes:
+                on_bytes(done, total)
     if h.hexdigest().lower() != want:
         new.unlink(missing_ok=True)
         raise RuntimeError("контрольная сумма не совпала — файл повреждён, обновление отменено")
