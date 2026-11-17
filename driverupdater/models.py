@@ -30,12 +30,13 @@ class Necessity(str, Enum):
 class Action(str, Enum):
     INSTALL = "install"  # драйвера нет / стоит базовый — нужно поставить
     UPDATE = "update"    # есть более новая версия
+    REPAIR = "repair"    # драйвер правильный, но устройство сбоит — помогает перезапуск
     NONE = "none"
 
     @property
     def label(self) -> str:
         return {Action.INSTALL: "установить", Action.UPDATE: "обновить",
-                Action.NONE: "—"}[self]
+                Action.REPAIR: "исправить", Action.NONE: "—"}[self]
 
 
 @dataclass
@@ -51,6 +52,9 @@ class SystemInfo:
     os_version: str = ""
     os_build: int = 0
     arch: str = ""  # x64 / x86 / arm64
+    board_maker: str = ""
+    board_product: str = ""
+    pc_type: int = 0  # 1 — настольный, 2 — ноутбук (Win32_ComputerSystem.PCSystemType)
 
     @property
     def is_windows11(self) -> bool:
@@ -103,7 +107,9 @@ class DriverOffer:
     provider: str = ""
     driver_class: str = ""
     products: str = ""      # для каталога: «Windows 10 and later drivers» и т.п.
-    update_id: str = ""     # GUID в Windows Update / Update Catalog
+    update_id: str = ""     # GUID в Windows Update / Update Catalog (или версия у производителя)
+    download_url: str = ""  # прямая ссылка (для драйверов с сайта производителя)
+    known_newer: bool = False  # источник уже сам сверил версии (сайт NVIDIA) — сравнивать не нужно
     size_bytes: int = 0
     is_firmware: bool = False
     reboot_required: bool = False
@@ -121,6 +127,7 @@ class Assessment:
     offer: DriverOffer | None = None
     manual_hint: str = ""   # ссылка на официальный сайт, если автоматом не нашли
     auto_install: bool = True  # False — ставить только вручную (например, BIOS)
+    repairable: bool = False   # можно попробовать перезапустить устройство
 
     def to_dict(self) -> dict:
         return {
@@ -131,4 +138,5 @@ class Assessment:
             "offer": self.offer.to_dict() if self.offer else None,
             "manual_hint": self.manual_hint,
             "auto_install": self.auto_install,
+            "repairable": self.repairable,
         }

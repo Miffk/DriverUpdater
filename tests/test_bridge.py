@@ -41,6 +41,14 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(fw["selected"])  # прошивка по умолчанию не отмечена
         net = next(i for i in items if i["problem"] == 28)
         self.assertEqual((net["vendor"], net["cls"]), ("Intel", "Net"))
+        self.assertEqual(net["tool"], "")  # драйвер нашёлся в Windows Update — программа Intel не нужна
+        chipset = next(i for i in items if i["cls"] == "System")
+        self.assertEqual(chipset["tool"], "amd")  # для чипсета AMD — официальная программа AMD
+        hid = next(i for i in items if i["problem"] == 10)
+        self.assertEqual((hid["action"], hid["repairable"], hid["vendor"]), ("repair", True, "Winbond"))
+        system = next(d for t, d in events if t == "system")["system"]["display"]
+        self.assertEqual(system["computer"], "Настольный ПК MSI")
+        self.assertEqual(system["board"], "MSI MAG B550 TOMAHAWK")
 
     def test_busy_guard(self):
         b, _ = make_bridge()

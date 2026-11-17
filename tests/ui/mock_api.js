@@ -37,6 +37,13 @@
         return { ok: true, count: keys.length };
       },
       open_url: async () => true, reboot: async () => true, relaunch_as_admin: async () => false,
+      check_update: async () => ({ available: true, version: '0.3.1', current: '0.3.0', canAutoUpdate: true,
+        notes: '- Проверка драйверов на сайте NVIDIA\n- Кнопка «Перезапустить устройство»', page: 'https://github.com/' }),
+      apply_update: async () => ({ ok: true }),
+      repair: async (id) => { setTimeout(() => { emit('repair_done', { id, ok: false,
+        message: 'Перезапуск не помог. Попробуйте вставить устройство в другой USB-разъём или перезагрузить компьютер.' });
+        emit('idle', { task: 'repair' }); }, 600 * SPEED); return { ok: true }; },
+      run_tool: async () => ({ ok: true }),
     },
   };
   window.dispatchEvent(new Event('pywebviewready'));

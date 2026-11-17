@@ -209,6 +209,10 @@ input:disabled + .switch { opacity: .4; }
 /* ───────────── Список устройств ───────────── */
 .group { margin-top: 18px; animation: rise .4s both; }
 .group-head { display: flex; align-items: center; gap: 10px; padding: 0 4px 10px; }
+.group-head .fold { display: inline-flex; align-items: center; gap: 10px; border: none; background: none; padding: 2px 6px 2px 0; cursor: pointer; border-radius: 8px; }
+.group-head .fold:focus-visible { outline: 2px solid var(--accent); }
+.group-head .fold > .ic { width: 16px; height: 16px; color: var(--muted); transform: rotate(90deg); transition: transform .2s; }
+.group.folded .group-head .fold > .ic { transform: none; }
 .group-head .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 4px var(--cbg); }
 .group-head h3 { font-size: 15px; font-weight: 700; }
 .group-head .count { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--cbg); color: var(--c); }
@@ -252,6 +256,16 @@ input:disabled + .switch { opacity: .4; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; color: var(--text-2); word-break: break-all; user-select: text; }
 .why .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Плашка обновления программы */
+.update-bar {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 10px 12px 10px 16px;
+  border-radius: 16px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 4px var(--blue-bg); animation: rise .4s both; backdrop-filter: blur(14px);
+}
+.update-bar > .ic { color: var(--accent); }
+.update-bar span { flex: 1; font-weight: 600; }
+.notes p { margin: 0 0 6px; }
 
 /* Пустое состояние / заглушки */
 .empty { text-align: center; padding: 56px 20px; color: var(--muted); }

@@ -45,7 +45,7 @@ class ClassifyTests(unittest.TestCase):
     def test_snapshot_parsed(self):
         self.assertEqual(self.system.os_build, 22631)
         self.assertTrue(self.system.is_windows11)
-        self.assertEqual(len(self.devices), 9)
+        self.assertEqual(len(self.devices), 10)
 
     def test_basic_display_is_required(self):
         a = self.items["Microsoft Basic Display Adapter"]
@@ -57,7 +57,7 @@ class ClassifyTests(unittest.TestCase):
     def test_missing_driver_is_required(self):
         a = self.items["Сетевой контроллер"]
         self.assertEqual(a.necessity, Necessity.REQUIRED)
-        self.assertIn("код 28", a.reason)
+        self.assertIn("не установлен драйвер", a.reason)
         self.assertIsNotNone(a.offer)
 
     def test_chipset_update_recommended(self):
@@ -82,7 +82,15 @@ class ClassifyTests(unittest.TestCase):
     def test_disabled_device_skipped(self):
         a = self.items["Logitech HD Webcam C270"]
         self.assertEqual(a.necessity, Necessity.NOT_NEEDED)
-        self.assertIn("отключено", a.reason)
+        self.assertIn("отключили", a.reason)
+
+    def test_usb_input_error_suggests_restart_not_driver(self):
+        # Случай с реального ПК: USB-устройство ввода, код 10, стандартный драйвер Windows.
+        a = self.items["USB-устройство ввода"]
+        self.assertEqual((a.necessity, a.action), (Necessity.REQUIRED, Action.REPAIR))
+        self.assertTrue(a.repairable)
+        self.assertIn("ни при чём", a.reason)
+        self.assertIsNone(a.offer)
 
     def test_inbox_usb_not_needed(self):
         a = next(v for k, v in self.items.items() if k.startswith("Расширяемый"))
@@ -149,7 +157,7 @@ class CliTests(unittest.TestCase):
     def test_check_offline(self):
         code, out = self.run_cli("check", *self.ARGS)
         self.assertEqual(code, 0)
-        self.assertIn("НЕОБХОДИМО — 2", out)
+        self.assertIn("НЕОБХОДИМО — 3", out)
         self.assertIn("[Net]", out)  # класс определён по PCI-коду, хотя драйвера нет
 
     def test_install_dry_run(self):
@@ -161,12 +169,12 @@ class CliTests(unittest.TestCase):
         code, out = self.run_cli("scan", "--all", "--from-file", str(FIX / "snapshot.json"))
         self.assertEqual(code, 0)
         self.assertNotIn("в официальных источниках нет", out)
-        self.assertIn("команда check", out)
+        self.assertIn("Обновления ещё не проверялись", out)
 
     def test_json_output(self):
         code, out = self.run_cli("check", "--json", *self.ARGS)
         data = json.loads(out)
-        self.assertEqual(len(data["devices"]), 9)
+        self.assertEqual(len(data["devices"]), 10)
 
 
 if __name__ == "__main__":

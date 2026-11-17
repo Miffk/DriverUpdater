@@ -18,6 +18,7 @@ $bb   = Get-CimInstance Win32_BaseBoard
 $bios = Get-CimInstance Win32_BIOS
 $cpu  = Get-CimInstance Win32_Processor | Select-Object -First 1
 $gpus = @(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name })
+$ramInstalled = (Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue | Measure-Object Capacity -Sum).Sum
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
   'AMD64' { 'x64' } 'ARM64' { 'arm64' } 'x86' { if ($env:PROCESSOR_ARCHITEW6432) { 'x64' } else { 'x86' } }
@@ -56,9 +57,12 @@ $result = [ordered]@{
     manufacturer = [string]$cs.Manufacturer
     model        = [string]$cs.Model
     board        = ("{0} {1}" -f $bb.Manufacturer, $bb.Product).Trim()
+    board_maker  = [string]$bb.Manufacturer
+    board_product = [string]$bb.Product
     bios         = ("{0} {1} ({2})" -f $bios.Manufacturer, $bios.SMBIOSBIOSVersion, (D $bios.ReleaseDate)).Trim()
     cpu          = ([string]$cpu.Name).Trim()
-    ram_gb       = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)
+    ram_gb       = if ($ramInstalled) { [math]::Round($ramInstalled / 1GB, 1) } else { [math]::Round($cs.TotalPhysicalMemory / 1GB, 1) }
+    pc_type      = [int]$cs.PCSystemType   # 1 — настольный, 2 — ноутбук/планшет
     gpus         = $gpus
     os_name      = [string]$os.Caption
     os_version   = [string]$os.Version
@@ -87,6 +91,8 @@ def parse_snapshot(data: dict) -> tuple[SystemInfo, list[Device]]:
         ram_gb=float(s.get("ram_gb") or 0), gpus=_as_list(s.get("gpus")),
         os_name=s.get("os_name", ""), os_version=s.get("os_version", ""),
         os_build=int(s.get("os_build") or 0), arch=s.get("arch", "x64"),
+        pc_type=int(s.get("pc_type") or 0),
+        board_maker=s.get("board_maker", ""), board_product=s.get("board_product", ""),
     )
     devices = []
     for d in data.get("devices") or []:

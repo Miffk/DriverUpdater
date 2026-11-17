@@ -4,31 +4,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from . import vendors
 from .models import Action, Assessment, Device, DriverOffer, Necessity
 from .versions import is_newer
 
-# Коды ошибок Диспетчера устройств, которые лечатся установкой драйвера.
+# Ошибки Диспетчера устройств — простыми словами.
 DRIVER_PROBLEMS = {
-    1: "устройство настроено неправильно (код 1)",
-    3: "драйвер повреждён или не хватает памяти (код 3)",
-    10: "устройство не может запуститься (код 10)",
-    18: "драйвер нужно переустановить (код 18)",
-    19: "ошибка в реестре драйвера (код 19)",
-    28: "драйвер не установлен (код 28)",
-    31: "Windows не смогла загрузить драйвер (код 31)",
-    32: "служба драйвера отключена (код 32)",
-    37: "драйвер вернул ошибку при инициализации (код 37)",
-    39: "драйвер повреждён или отсутствует (код 39)",
-    41: "драйвер загружен, но устройство не найдено (код 41)",
-    43: "устройство сообщило о сбое (код 43)",
-    48: "драйвер заблокирован из-за проблем совместимости (код 48)",
-    52: "не удалось проверить цифровую подпись драйвера (код 52)",
+    1: "Windows неправильно настроила это устройство.",
+    3: "Драйвер устройства повреждён.",
+    10: "Устройство не смогло запуститься.",
+    18: "Драйвер устройства нужно переустановить.",
+    19: "Настройки драйвера в Windows повреждены.",
+    28: "Для этого устройства не установлен драйвер.",
+    31: "Windows не смогла загрузить драйвер этого устройства.",
+    32: "Драйвер устройства отключён.",
+    37: "Драйвер устройства не смог запуститься.",
+    39: "Драйвер устройства повреждён или отсутствует.",
+    41: "Драйвер загружен, но Windows не видит само устройство.",
+    43: "Устройство сообщило о сбое, и Windows его остановила.",
+    48: "Драйвер заблокирован: он не подходит для этой версии Windows.",
+    52: "Windows не смогла проверить подлинность драйвера.",
 }
 IGNORED_PROBLEMS = {
-    22: "устройство отключено вами в Диспетчере устройств",
-    24: "устройство отсутствует или не подключено",
-    45: "устройство сейчас не подключено к компьютеру",
+    22: "Вы отключили это устройство вручную — проверять его не нужно.",
+    24: "Устройство сейчас отсутствует или не подключено.",
+    45: "Устройство сейчас не подключено к компьютеру.",
 }
+# Сбои, при которых драйвер обычно ни при чём и помогает перезапуск устройства.
+RESTART_PROBLEMS = {1, 3, 10, 31, 37, 41, 43}
 
 # Классы устройств, где «родной» драйвер Microsoft — правильный выбор.
 INBOX_CLASSES = {
@@ -47,104 +50,64 @@ class ClassRule:
     update_reason: str
 
 
+_STORAGE = ("Диски работают. Менять этот драйвер без причины не стоит — от него зависит "
+            "запуск Windows.")
+_AUDIO = "Звук уже работает. Обновление даст только мелкие исправления."
+
 RULES: dict[str, ClassRule] = {
-    "Display": ClassRule(
-        "Видеокарта", Necessity.REQUIRED, Necessity.RECOMMENDED,
-        "новые версии исправляют ошибки, повышают производительность и совместимость с играми"),
-    "Net": ClassRule(
-        "Сеть (Ethernet/Wi-Fi)", Necessity.REQUIRED, Necessity.RECOMMENDED,
-        "сетевой драйвер напрямую связан с безопасностью и стабильностью подключения"),
-    "Bluetooth": ClassRule(
-        "Bluetooth", Necessity.REQUIRED, Necessity.RECOMMENDED,
-        "обновления исправляют обрывы связи и проблемы с наушниками/геймпадами"),
-    "System": ClassRule(
-        "Системные устройства (чипсет)", Necessity.REQUIRED, Necessity.RECOMMENDED,
-        "драйверы чипсета отвечают за энергосбережение, шины PCIe/USB и стабильность системы"),
-    "MEDIA": ClassRule(
-        "Звук", Necessity.REQUIRED, Necessity.OPTIONAL,
-        "звук уже работает; новая версия даёт мелкие исправления и фирменные функции"),
-    "Media": ClassRule(
-        "Звук", Necessity.REQUIRED, Necessity.OPTIONAL,
-        "звук уже работает; новая версия даёт мелкие исправления и фирменные функции"),
-    "HDC": ClassRule(
-        "Контроллер дисков (SATA/NVMe)", Necessity.REQUIRED, Necessity.OPTIONAL,
-        "работающий драйвер контроллера дисков лучше не менять без причины — "
-        "от него зависит загрузка Windows"),
-    "SCSIAdapter": ClassRule(
-        "Контроллер хранения (RAID/NVMe)", Necessity.REQUIRED, Necessity.OPTIONAL,
-        "работающий драйвер контроллера дисков лучше не менять без причины — "
-        "от него зависит загрузка Windows"),
-    "Camera": ClassRule(
-        "Веб-камера", Necessity.REQUIRED, Necessity.OPTIONAL,
-        "камера уже работает; обновление обычно не меняет ничего заметного"),
-    "Biometric": ClassRule(
-        "Сканер отпечатков/Windows Hello", Necessity.REQUIRED, Necessity.OPTIONAL,
-        "сканер работает; обновление нужно только при проблемах с распознаванием"),
-    "Sensor": ClassRule(
-        "Датчики (поворот экрана, освещённость)", Necessity.RECOMMENDED, Necessity.OPTIONAL,
-        "датчики работают; обновление по желанию"),
-    "Battery": ClassRule(
-        "Батарея/питание", Necessity.REQUIRED, Necessity.OPTIONAL,
-        "индикация заряда работает; обновление по желанию"),
-    "Extension": ClassRule(
-        "Расширение драйвера производителя", Necessity.OPTIONAL, Necessity.OPTIONAL,
-        "это надстройка производителя ПК (настройки, фирменные функции), а не основной драйвер"),
-    "SoftwareComponent": ClassRule(
-        "Программный компонент драйвера", Necessity.OPTIONAL, Necessity.OPTIONAL,
-        "вспомогательное ПО к драйверу (панель управления, служба), не влияет на работу устройства"),
-    "Firmware": ClassRule(
-        "Прошивка (BIOS/UEFI/контроллеры)", Necessity.OPTIONAL, Necessity.OPTIONAL,
-        "обновление прошивки нужно только при известных проблемах; сбой питания во время "
-        "прошивки может вывести ПК из строя — ставьте вручную и осознанно"),
+    "Display": ClassRule("Видеокарта", Necessity.REQUIRED, Necessity.RECOMMENDED,
+                         "В новых версиях исправлены ошибки, игры и видео работают быстрее и стабильнее."),
+    "Net": ClassRule("Сеть и интернет", Necessity.REQUIRED, Necessity.RECOMMENDED,
+                     "Обновление делает интернет стабильнее и закрывает уязвимости."),
+    "Bluetooth": ClassRule("Bluetooth", Necessity.REQUIRED, Necessity.RECOMMENDED,
+                           "Обновление помогает, если отключаются беспроводные наушники или геймпад."),
+    "System": ClassRule("Материнская плата (чипсет)", Necessity.REQUIRED, Necessity.RECOMMENDED,
+                        "Этот драйвер отвечает за стабильную работу материнской платы, "
+                        "USB-разъёмов и энергосбережение."),
+    "MEDIA": ClassRule("Звук", Necessity.REQUIRED, Necessity.OPTIONAL, _AUDIO),
+    "Media": ClassRule("Звук", Necessity.REQUIRED, Necessity.OPTIONAL, _AUDIO),
+    "HDC": ClassRule("Контроллер дисков", Necessity.REQUIRED, Necessity.OPTIONAL, _STORAGE),
+    "SCSIAdapter": ClassRule("Контроллер дисков", Necessity.REQUIRED, Necessity.OPTIONAL, _STORAGE),
+    "Camera": ClassRule("Веб-камера", Necessity.REQUIRED, Necessity.OPTIONAL,
+                        "Камера уже работает. Обновление обычно ничего заметного не меняет."),
+    "Biometric": ClassRule("Сканер отпечатков пальцев", Necessity.REQUIRED, Necessity.OPTIONAL,
+                           "Сканер работает. Обновлять стоит, только если он плохо узнаёт палец."),
+    "Sensor": ClassRule("Датчики (поворот экрана, яркость)", Necessity.RECOMMENDED, Necessity.OPTIONAL,
+                        "Датчики работают, обновление по желанию."),
+    "Battery": ClassRule("Батарея", Necessity.REQUIRED, Necessity.OPTIONAL,
+                         "Заряд показывается правильно, обновление по желанию."),
+    "Extension": ClassRule("Дополнение от производителя", Necessity.OPTIONAL, Necessity.OPTIONAL,
+                           "Это дополнение от производителя компьютера (фирменные настройки), "
+                           "а не основной драйвер."),
+    "SoftwareComponent": ClassRule("Служебная программа драйвера", Necessity.OPTIONAL, Necessity.OPTIONAL,
+                                   "Это служебная программа к драйверу (например, панель настроек). "
+                                   "На работу устройства она не влияет."),
+    "Firmware": ClassRule("Прошивка (BIOS)", Necessity.OPTIONAL, Necessity.OPTIONAL,
+                          "Это обновление прошивки (BIOS). Ставьте его, только если есть конкретная "
+                          "проблема: если во время обновления пропадёт питание, компьютер может "
+                          "перестать включаться."),
 }
 
-VENDOR_PAGES = {
-    "10DE": ("NVIDIA", "https://www.nvidia.com/Download/index.aspx"),
-    "1002": ("AMD", "https://www.amd.com/en/support/download/drivers.html"),
-    "1022": ("AMD", "https://www.amd.com/en/support/download/drivers.html"),
-    "8086": ("Intel", "https://www.intel.com/content/www/us/en/support/detect.html"),
-    "10EC": ("Realtek", "https://www.realtek.com/Download/List?cate_id=584"),
-    "14E4": ("Broadcom", "https://www.broadcom.com/support/download-search"),
-    "168C": ("Qualcomm Atheros", "https://www.qualcomm.com/support"),
-    "17CB": ("Qualcomm", "https://www.qualcomm.com/support"),
-    "14C3": ("MediaTek", "https://www.mediatek.com/products/connectivity-and-networking"),
+INBOX_TITLES = {
+    "USB": "USB-разъёмы", "HIDClass": "Устройство ввода", "Keyboard": "Клавиатура",
+    "Mouse": "Мышь или тачпад", "Monitor": "Монитор", "DiskDrive": "Диск", "Volume": "Раздел диска",
+    "VolumeSnapshot": "Резервная копия диска", "CDROM": "Дисковод", "Processor": "Процессор",
+    "Computer": "Компьютер", "SoftwareDevice": "Служебное устройство Windows",
+    "LegacyDriver": "Служебный драйвер Windows", "PrintQueue": "Принтер", "Printer": "Принтер",
+    "WPD": "Телефон или флешка", "AudioEndpoint": "Динамики и микрофоны",
+    "SmartCardReader": "Считыватель карт", "Ports": "Порты", "Image": "Камера или сканер",
+    "UCM": "USB Type-C", "SecurityDevices": "Модуль безопасности",
 }
 
 
-def vendor_id(device: Device) -> str:
-    for hid in device.hardware_ids:
-        u = hid.upper()
-        for key in ("VEN_", "VID_"):
-            if key in u:
-                return u.split(key, 1)[1][:4]
-    return ""
-
-
-# Производители по PCI/USB Vendor ID — чтобы показать понятное имя вместо безликого
-# «Сетевой контроллер» или «Microsoft Basic Display Adapter».
-VENDOR_NAMES = {
-    "10DE": "NVIDIA", "1002": "AMD", "1022": "AMD", "8086": "Intel", "10EC": "Realtek",
-    "14E4": "Broadcom", "168C": "Qualcomm Atheros", "17CB": "Qualcomm", "14C3": "MediaTek",
-    "1B21": "ASMedia", "1969": "Qualcomm Atheros", "11AB": "Marvell", "144D": "Samsung",
-    "15B7": "SanDisk/WD", "1C5C": "SK hynix", "126F": "Silicon Motion", "1987": "Phison",
-    "1179": "Toshiba/Kioxia", "1E0F": "Kioxia", "8087": "Intel", "0BDA": "Realtek",
-    "046D": "Logitech", "045E": "Microsoft", "05AC": "Apple", "1532": "Razer", "1038": "SteelSeries",
-    "0B05": "ASUS", "1462": "MSI", "1458": "Gigabyte", "13D3": "IMC Networks", "04F2": "Chicony",
-    "0C45": "Microdia", "27C6": "Goodix", "06CB": "Synaptics", "138A": "Validity", "1D6B": "Linux Foundation",
-    "1106": "VIA", "1217": "O2 Micro", "5143": "Qualcomm", "1D17": "Zhaoxin",
-    "1B4B": "Marvell", "8564": "Transcend", "0781": "SanDisk", "0951": "Kingston",
-    "111D": "IDT", "14F1": "Conexant", "1102": "Creative", "1095": "Silicon Image",
-}
-
-
-def vendor_name(device: Device) -> str:
-    vid = vendor_id(device)
-    return VENDOR_NAMES.get(vid) or (VENDOR_PAGES.get(vid, ("",))[0])
+# Совместимость: эти функции раньше жили здесь.
+vendor_id = vendors.vendor_id
+vendor_name = vendors.vendor_name
 
 
 def vendor_hint(device: Device) -> str:
-    info = VENDOR_PAGES.get(vendor_id(device))
-    return f"{info[0]}: {info[1]}" if info else ""
+    v = vendors.lookup(device)
+    return f"{v.name}: {v.drivers_url}" if v and v.drivers_url else ""
 
 
 def is_basic_display(device: Device) -> bool:
@@ -183,86 +146,103 @@ def effective_class(device: Device, offer: DriverOffer | None = None) -> str:
 
 def _rule(cls: str) -> ClassRule:
     return RULES.get(cls, ClassRule(
-        cls or "Неизвестное устройство", Necessity.RECOMMENDED, Necessity.OPTIONAL,
-        "устройство работает; обновление по желанию"))
+        "Неизвестное устройство" if not cls else cls, Necessity.RECOMMENDED, Necessity.OPTIONAL,
+        "Устройство работает, обновление по желанию."))
 
 
-INBOX_TITLES = {
-    "USB": "USB-контроллеры", "HIDClass": "Устройства ввода", "Keyboard": "Клавиатура",
-    "Mouse": "Мышь и тачпад", "Monitor": "Монитор", "DiskDrive": "Диск", "Volume": "Том диска",
-    "VolumeSnapshot": "Теневая копия тома", "CDROM": "Оптический привод", "Processor": "Процессор",
-    "Computer": "Компьютер", "SoftwareDevice": "Программное устройство",
-    "LegacyDriver": "Системный драйвер", "PrintQueue": "Очередь печати", "Printer": "Принтер",
-    "WPD": "Портативное устройство", "AudioEndpoint": "Аудиовыход/вход",
-    "SmartCardReader": "Считыватель смарт-карт", "Ports": "Порты COM/LPT",
-    "Image": "Камера/сканер", "UCM": "USB Type-C", "SecurityDevices": "Модуль безопасности (TPM)",
+OTHER_TITLES = {
+    "AudioProcessingObject": "Звуковые эффекты", "OtherHardware": "Другое устройство",
+    "SDHost": "Кардридер", "MTD": "Карта памяти", "Infrared": "ИК-порт", "Modem": "Модем",
+    "MultiFunction": "Многофункциональное устройство", "MediumChanger": "Устройство хранения",
+    "TapeDrive": "Ленточный накопитель", "1394": "Порт FireWire", "PCMCIA": "Слот PCMCIA",
+    "SmartCard": "Смарт-карта", "Holographic": "Шлем смешанной реальности", "XboxComposite": "Геймпад Xbox",
+    "WSDPrintDevice": "Сетевой принтер", "NetService": "Сетевая служба", "NetClient": "Сетевой клиент",
+    "NetTrans": "Сетевой протокол", "SecurityAccelerator": "Ускоритель шифрования",
+    "Proximity": "NFC", "SoftwareComponent": "Служебная программа драйвера",
+    "ComputeAccelerator": "Ускоритель вычислений", "Endpoint": "Аудиоустройство",
 }
 
 
 def class_title(cls: str) -> str:
     """Понятное название класса устройства для интерфейса."""
-    return INBOX_TITLES.get(cls) or _rule(cls).title
+    if cls in INBOX_TITLES:
+        return INBOX_TITLES[cls]
+    if cls in RULES:
+        return RULES[cls].title
+    if cls in OTHER_TITLES:
+        return OTHER_TITLES[cls]
+    return "Другое устройство" if cls else "Неизвестное устройство"
 
 
 def assess(device: Device, offer: DriverOffer | None, searched: bool = True) -> Assessment:
     cls = effective_class(device, offer)
     rule = _rule(cls)
-    title = class_title(cls)
     hint = vendor_hint(device)
 
-    def result(nec, act, reason, use_offer=True, auto=True):
+    def result(nec, act, reason, use_offer=True, auto=True, repairable=False):
         return Assessment(device, nec, act, reason, offer if use_offer else None,
                           manual_hint=hint if nec.rank <= 1 and act != Action.NONE else "",
-                          auto_install=auto)
+                          auto_install=auto, repairable=repairable)
 
-    if device.problem_code in IGNORED_PROBLEMS:
-        return result(Necessity.NOT_NEEDED, Action.NONE,
-                      IGNORED_PROBLEMS[device.problem_code].capitalize() + ".", use_offer=False)
+    code = device.problem_code
+    if code in IGNORED_PROBLEMS:
+        return result(Necessity.NOT_NEEDED, Action.NONE, IGNORED_PROBLEMS[code], use_offer=False)
 
     firmware = cls == "Firmware" or (offer is not None and offer.is_firmware)
 
-    # 1. Устройство не работает из-за драйвера.
-    if device.problem_code in DRIVER_PROBLEMS or (not device.has_driver and device.problem_code):
-        why = DRIVER_PROBLEMS.get(device.problem_code, f"ошибка устройства (код {device.problem_code})")
+    # 1. Устройство не работает.
+    if code in DRIVER_PROBLEMS or (not device.has_driver and code):
+        problem = DRIVER_PROBLEMS.get(code, "С устройством что-то не так.")
+        right_driver = device.has_driver and (cls in INBOX_CLASSES or is_microsoft_driver(device))
+        if offer is None and right_driver and code in RESTART_PROBLEMS:
+            # Драйвер подходящий — дело не в нём. Так бывает у USB-устройств, подсветки и т.п.
+            usb = vendors.bus(device) == "usb"
+            tips = ("Обычно помогает перезапустить устройство (кнопка ниже), вставить его в другой "
+                    "USB-разъём или перезагрузить компьютер. Если не поможет — возможно, неисправно "
+                    "само устройство или кабель." if usb else
+                    "Попробуйте перезапустить устройство (кнопка ниже) или перезагрузить компьютер. "
+                    "Если не поможет — поищите драйвер на сайте производителя.")
+            return result(Necessity.REQUIRED, Action.REPAIR,
+                          f"{problem} Драйвер тут, скорее всего, ни при чём: для такого устройства "
+                          f"подходит стандартный драйвер Windows, и он уже установлен. {tips}",
+                          use_offer=False, repairable=True)
         nec = Necessity.REQUIRED if rule.missing != Necessity.OPTIONAL else Necessity.OPTIONAL
-        return result(nec, Action.INSTALL,
-                      f"{title}: {why} — без драйвера устройство не работает.",
-                      auto=not firmware)
+        return result(nec, Action.INSTALL, f"{problem} Без подходящего драйвера оно не работает.",
+                      auto=not firmware, repairable=device.has_driver)
 
-    # 2. Видеокарта на базовом драйвере Microsoft.
+    # 2. Видеокарта на временном драйвере Windows.
     if is_basic_display(device):
         return result(Necessity.REQUIRED, Action.INSTALL,
-                      "Видеокарта работает на «Базовом видеоадаптере Microsoft»: нет аппаратного "
-                      "ускорения, игр, нормальной частоты обновления и выбора разрешения.")
+                      "Сейчас вместо драйвера видеокарты работает временный драйвер Windows. "
+                      "Из-за этого не работают игры и ускорение видео, а экран может показывать "
+                      "не в полном разрешении.")
 
-    # 3. Есть более новая версия в официальном источнике.
-    if offer and is_newer(offer.version, offer.date, device.driver_version, device.driver_date):
+    # 3. Есть более новая версия.
+    if offer and (offer.known_newer or is_newer(offer.version, offer.date,
+                                                device.driver_version, device.driver_date)):
         if firmware:
-            return result(Necessity.OPTIONAL, Action.UPDATE,
-                          f"{RULES['Firmware'].title}: {RULES['Firmware'].update_reason}.", auto=False)
+            return result(Necessity.OPTIONAL, Action.UPDATE, RULES["Firmware"].update_reason, auto=False)
         nec, reason = rule.update, rule.update_reason
         if is_generic_audio(device):
             nec = Necessity.RECOMMENDED
-            reason = ("сейчас стоит универсальный драйвер Microsoft; драйвер производителя "
-                      "включает определение разъёмов, микрофонные эффекты и фирменные настройки")
+            reason = ("Сейчас стоит универсальный драйвер звука от Windows. Драйвер производителя "
+                      "добавит фирменные настройки звука и микрофона.")
         elif cls in INBOX_CLASSES:
             nec = Necessity.OPTIONAL
-            reason = "стандартный драйвер Windows для этого класса устройств работает корректно"
-        new = " от ".join(x for x in (offer.version, offer.date) if x)
-        cur = " от ".join(x for x in (device.driver_version, device.driver_date) if x) or "нет"
-        return result(nec, Action.UPDATE,
-                      f"{title}: доступна версия {new} (сейчас {cur}) — {reason}.")
+            reason = ("Стандартный драйвер Windows для такого устройства тоже работает хорошо — "
+                      "обновлять не обязательно.")
+        return result(nec, Action.UPDATE, f"Есть более новая версия драйвера. {reason}")
 
     # 4. Всё в порядке.
     if cls in INBOX_CLASSES or device.is_virtual:
-        why = "используется стандартный драйвер Windows — это правильный выбор для такого устройства."
+        why = "Стоит стандартный драйвер Windows — для этого устройства он подходит лучше всего."
     elif not searched:
-        why = "драйвер установлен и работает (наличие обновлений проверяет команда check)."
+        why = "Драйвер установлен и работает. Обновления ещё не проверялись."
     elif is_microsoft_driver(device):
-        why = "работает на драйвере Microsoft из состава Windows, более нового официального не найдено."
+        why = "Работает на драйвере из состава Windows. Более новой официальной версии нет."
     else:
-        why = "драйвер установлен и работает; более новой версии в официальных источниках нет."
-    return result(Necessity.NOT_NEEDED, Action.NONE, f"{title}: {why}", use_offer=False)
+        why = "Драйвер установлен и работает. Более новой версии нет."
+    return result(Necessity.NOT_NEEDED, Action.NONE, why, use_offer=False)
 
 
 def match_offers(devices: list[Device], offers: list[DriverOffer]

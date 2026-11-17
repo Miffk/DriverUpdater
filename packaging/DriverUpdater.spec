@@ -9,14 +9,18 @@ WEB = os.path.join(ROOT, "driverupdater", "webui", "web")
 # Лишнее не тащим в exe — меньше размер и быстрее запуск.
 EXCLUDES = ["tkinter", "PySide6", "PyQt5", "PyQt6", "qtpy", "gi", "cefpython3", "numpy", "test"]
 
+DATA = os.path.join(ROOT, "driverupdater", "data")  # pci.ids / usb.ids — названия устройств
+DATAS = [(DATA, "driverupdater/data")] if os.path.isdir(DATA) else []
+
 gui = Analysis([os.path.join(SPECPATH, "gui_entry.py")], pathex=[ROOT],
-               datas=[(WEB, "driverupdater/webui/web"), (ICON, "assets")],
+               datas=[(WEB, "driverupdater/webui/web"), (ICON, "assets")] + DATAS,
                hiddenimports=["clr"], excludes=EXCLUDES)
 gui_exe = EXE(PYZ(gui.pure), gui.scripts, gui.binaries, gui.datas,
               name="DriverUpdater", icon=ICON, version=VERSION,
               console=False, uac_admin=True, upx=False)
 
-cli = Analysis([os.path.join(SPECPATH, "cli_entry.py")], pathex=[ROOT], excludes=EXCLUDES + ["webview"])
+cli = Analysis([os.path.join(SPECPATH, "cli_entry.py")], pathex=[ROOT], datas=DATAS,
+               excludes=EXCLUDES + ["webview"])
 cli_exe = EXE(PYZ(cli.pure), cli.scripts, cli.binaries, cli.datas,
               name="DriverUpdater-cli", icon=ICON, version=VERSION,
               console=True, uac_admin=False, upx=False)

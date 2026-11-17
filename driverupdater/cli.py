@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import __version__, engine, installer, powershell, report
+from . import __version__, engine, installer, powershell, report, updater
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--deep", action="store_true",
                         help="искать в каталоге обновления для всех важных устройств (дольше)")
 
+    sub.add_parser("self-update", help="обновить саму программу до последней версии с GitHub")
     common(sub.add_parser("scan", help="только определить железо и драйверы (без интернета)"))
     chk = sub.add_parser("check", help="найти, какие драйверы нужно установить или обновить")
     common(chk)
@@ -54,6 +55,28 @@ def log(msg: str) -> None:
         print(msg, file=sys.stderr, flush=True)
 
 
+def self_update() -> int:
+    try:
+        info = updater.check()
+    except OSError as e:
+        log(f"Не удалось связаться с GitHub: {e}")
+        return 2
+    if not info["available"]:
+        print(f"У вас последняя версия ({__version__}).")
+        return 0
+    print(f"Доступна версия {info['version']} (у вас {__version__}).")
+    if not info["canAutoUpdate"]:
+        print(f"Скачайте её здесь: {info['page']}")
+        return 0
+    try:
+        updater.apply(info, log)
+    except (OSError, RuntimeError) as e:
+        log(f"Обновить не удалось: {e}. Скачайте вручную: {info['page']}")
+        return 1
+    print("Готово. Запустите программу снова.")
+    return 0
+
+
 def confirm(question: str) -> bool:
     try:
         return input(f"{question} [y/N]: ").strip().lower() in ("y", "yes", "д", "да")
@@ -69,6 +92,9 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     args = build_parser().parse_args(argv)
+    updater.cleanup_old()
+    if args.command == "self-update":
+        return self_update()
 
     try:
         if args.command == "scan":
@@ -85,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"system": system.__dict__, "devices": [a.to_dict() for a in items]},
                          ensure_ascii=False, indent=2))
     else:
-        report.print_system(system)
+        report.print_system(system, res.devices)
         report.print_assessments(items, show_all=args.all)
 
     if args.command != "install":

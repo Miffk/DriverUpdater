@@ -8,7 +8,7 @@ import sys
 import threading
 from pathlib import Path
 
-from .. import powershell
+from .. import powershell, updater
 from . import webview2
 from .bridge import Bridge
 
@@ -33,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
     args, _ = p.parse_known_args(argv)
 
+    updater.cleanup_old()  # файл прошлой версии после самообновления
     if powershell.is_windows() and not webview2.ensure():
         return 4
 

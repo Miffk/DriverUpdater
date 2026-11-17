@@ -99,7 +99,7 @@ def backup_drivers(target: str) -> None:
         raise RuntimeError(_console(proc.stdout)[-1000:])
 
 
-def verify_signature(path: Path) -> str:
+def verify_signature(path: Path, signers: tuple[str, ...] = TRUSTED_SIGNERS) -> str:
     """Проверяет цифровую подпись Authenticode. Возвращает имя подписавшего или бросает ошибку."""
     info = powershell.run_json(
         f"$s = Get-AuthenticodeSignature -LiteralPath {powershell.ps_quote(str(path))}\n"
@@ -108,13 +108,14 @@ def verify_signature(path: Path) -> str:
     if info.get("status") != "Valid":
         raise RuntimeError(f"подпись файла недействительна ({info.get('status')})")
     signer = info.get("signer", "")
-    if not any(t in signer for t in TRUSTED_SIGNERS):
-        raise RuntimeError(f"файл подписан не Microsoft: {signer}")
+    if not any(t in signer for t in signers):
+        raise RuntimeError(f"файл подписан не тем, кем должен: {signer}")
     return signer
 
 
-def download(url: str, dest_dir: Path) -> Path:
-    if not host_allowed(url):
+def download(url: str, dest_dir: Path, hosts: tuple[str, ...] | None = None) -> Path:
+    allowed = host_allowed(url) if hosts is None else (urllib.parse.urlparse(url).hostname or "") in hosts
+    if not allowed:
         raise RuntimeError(f"адрес не из официального источника: {url}")
     https = url.replace("http://", "https://", 1)
     name = Path(urllib.parse.urlparse(url).path).name or "driver.cab"
@@ -125,7 +126,7 @@ def download(url: str, dest_dir: Path) -> Path:
     for candidate in dict.fromkeys([https, url]):
         try:
             req = urllib.request.Request(candidate, headers={"User-Agent": catalog.UA})
-            with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as fh:
+            with urllib.request.urlopen(req, timeout=300) as resp, open(dest, "wb") as fh:
                 shutil.copyfileobj(resp, fh, 1 << 20)
             return dest
         except OSError as e:
@@ -191,6 +192,67 @@ def install_from_catalog(a: Assessment, workspace: Path, log: Log) -> InstallRes
     return InstallResult(name, False, f"pnputil вернул {code}: {out.strip()[-300:]}")
 
 
+def installed_version(instance_id: str) -> str:
+    out = powershell.run_json(
+        "$d = Get-CimInstance Win32_PnPSignedDriver | Where-Object { $_.DeviceID -eq "
+        f"{powershell.ps_quote(instance_id)} }} | Select-Object -First 1\n"
+        "ConvertTo-Json -Compress -InputObject ([ordered]@{v=[string]$d.DriverVersion})")
+    return (out or {}).get("v", "")
+
+
+def install_nvidia(a: Assessment, workspace: Path, log: Log) -> InstallResult:
+    """Драйвер с официального сайта NVIDIA: скачать → проверить подпись NVIDIA →
+    тихая установка → сверить установленную версию → удалить установщик."""
+    from .providers import nvidia
+    off = a.offer
+    assert off is not None and off.download_url
+    pkg = workspace / ("nvidia_" + off.version)
+    pkg.mkdir(parents=True, exist_ok=True)
+    log(f"    скачивание с сайта NVIDIA: {off.download_url}")
+    exe = download(off.download_url, pkg, hosts=nvidia.DOWNLOAD_HOSTS)
+    signer = verify_signature(exe, (nvidia.SIGNER,))
+    log(f"    подпись в порядке: {signer.split(',')[0]}")
+    log("    установка (несколько минут, экран может мигать)…")
+    proc = subprocess.run([str(exe), "-s", "-noreboot", "-noeula"], capture_output=True,
+                          timeout=3600, **powershell.NO_WINDOW)
+    exe.unlink(missing_ok=True)
+    now = nvidia.windows_to_nvidia(installed_version(a.device.instance_id))
+    if now == off.version:
+        return InstallResult(a.device.name, True, f"установлен драйвер NVIDIA {off.version}", reboot=True)
+    return InstallResult(a.device.name, False,
+                         f"установщик NVIDIA завершился с кодом {proc.returncode}, "
+                         f"сейчас стоит версия {now or 'неизвестно'}")
+
+
+def restart_device(instance_id: str) -> tuple[bool, str]:
+    """Перезапуск устройства — как «отключить и включить» в Диспетчере устройств.
+    Если не помогло — удаляем устройство из системы и просим Windows найти его заново."""
+    q = powershell.ps_quote(instance_id)
+    script = (
+        f"$id = {q}\n"
+        "$null = & pnputil /restart-device \"$id\" 2>&1\n"
+        "Start-Sleep -Seconds 3\n"
+        "$d = Get-PnpDevice -InstanceId $id -ErrorAction SilentlyContinue\n"
+        "if (-not $d -or $d.Status -ne 'OK') {\n"
+        "  $null = & pnputil /remove-device \"$id\" 2>&1\n"
+        "  $null = & pnputil /scan-devices 2>&1\n"
+        "  Start-Sleep -Seconds 5\n"
+        "  $d = Get-PnpDevice -InstanceId $id -ErrorAction SilentlyContinue\n"
+        "}\n"
+        "ConvertTo-Json -Compress -InputObject ([ordered]@{status=[string]$d.Status; present=[bool]$d})")
+    try:
+        res = powershell.run_json(script, timeout=180) or {}
+    except powershell.PowerShellError as e:
+        return False, f"не удалось перезапустить устройство: {e}"
+    if res.get("status") == "OK":
+        return True, "Устройство перезапущено и теперь работает."
+    if not res.get("present"):
+        return False, ("Устройство пропало из системы. Переподключите его или перезагрузите компьютер — "
+                       "Windows найдёт его заново.")
+    return False, ("Перезапуск не помог. Попробуйте вставить устройство в другой USB-разъём или "
+                   "перезагрузить компьютер.")
+
+
 def remove_workspace(workspace: Path, report: Report) -> None:
     if not workspace.exists():
         return
@@ -215,7 +277,7 @@ def install(plan: list[Assessment], log: Log = print, progress: Progress = _no_p
     workspace = Path(tempfile.mkdtemp(prefix="DriverUpdater_"))
     try:
         wu = [a for a in plan if a.offer and a.offer.source == "windows_update"]
-        cat = [a for a in plan if a.offer and a.offer.source == "catalog"]
+        cat = [a for a in plan if a.offer and a.offer.source in ("catalog", "nvidia")]
 
         if wu:
             log(f"\n[Windows Update] установка {len(wu)} драйвер(ов)…")
@@ -240,10 +302,12 @@ def install(plan: list[Assessment], log: Log = print, progress: Progress = _no_p
                 log(f"  ✘ Windows Update: {e}")
 
         for a in cat:
-            log(f"\n[Update Catalog] {a.device.name}")
-            progress(offer_key(a), "running", "скачивание из каталога Microsoft")
+            nv = a.offer.source == "nvidia"  # type: ignore[union-attr]
+            log(f"\n[{'NVIDIA' if nv else 'Update Catalog'}] {a.device.name}")
+            progress(offer_key(a), "running",
+                     "скачивание с сайта NVIDIA и установка" if nv else "скачивание из каталога Microsoft")
             try:
-                res = install_from_catalog(a, workspace, log)
+                res = install_nvidia(a, workspace, log) if nv else install_from_catalog(a, workspace, log)
             except (RuntimeError, OSError, powershell.PowerShellError) as e:
                 res = InstallResult(a.device.name, False, str(e)[:300])
             done(a, res)

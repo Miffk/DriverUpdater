@@ -5,7 +5,7 @@ from __future__ import annotations
 from . import classify
 from .models import Action, Assessment, Necessity, SystemInfo
 
-SOURCE_NAMES = {"windows_update": "Windows Update", "catalog": "Microsoft Update Catalog"}
+SOURCE_NAMES = {"windows_update": "Windows Update", "catalog": "каталог Microsoft", "nvidia": "сайт NVIDIA"}
 
 
 def fmt_size(n: int) -> str:
@@ -16,16 +16,14 @@ def fmt_size(n: int) -> str:
     return str(n)
 
 
-def print_system(s: SystemInfo) -> None:
+def print_system(s: SystemInfo, devices=None) -> None:
+    from .engine import describe_system
+    d = describe_system(s, devices)
     print("=" * 72)
-    print(f" Компьютер : {s.manufacturer} {s.model}".rstrip())
-    print(f" Плата     : {s.board}")
-    print(f" BIOS      : {s.bios}")
-    print(f" Процессор : {s.cpu}")
-    print(f" Память    : {s.ram_gb:g} ГБ")
-    for g in s.gpus:
-        print(f" Видео     : {g}")
-    print(f" Система   : {s.os_name} (сборка {s.os_build}, {s.arch})")
+    for label, key in (("Компьютер", "computer"), ("Процессор", "cpu"), ("Видеокарта", "gpus"),
+                       ("Память", "ram"), ("Плата", "board"), ("Система", "os")):
+        if d.get(key):
+            print(f" {label:<10}: {d[key]}")
     print("=" * 72)
 
 

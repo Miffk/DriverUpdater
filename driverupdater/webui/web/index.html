@@ -10,6 +10,12 @@
   <div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>
 
   <div class="app">
+    <div class="update-bar" id="updateBar" hidden>
+      <i data-icon="sparkle"></i>
+      <span id="updateText">Вышла новая версия DriverUpdater</span>
+      <button class="btn btn-sm btn-ghost" id="updateNotes">Что нового</button>
+      <button class="btn btn-sm btn-primary" id="updateApply"><i data-icon="download"></i><span>Обновить</span></button>
+    </div>
     <!-- Шапка -->
     <header class="hero">
       <div class="ring" id="ring" data-state="loading">
@@ -59,16 +65,10 @@
     <section class="toolbar">
       <label class="search">
         <i data-icon="search"></i>
-        <input id="search" type="search" placeholder="Поиск устройства или ID оборудования" autocomplete="off">
+        <input id="search" type="search" placeholder="Найти устройство по названию или производителю" autocomplete="off">
       </label>
       <div class="toggles">
-        <label class="switch-row" title="Показать устройства, с которыми всё в порядке">
-          <input type="checkbox" id="optShowOk"><span class="switch"></span><span>Исправные</span>
-        </label>
-        <label class="switch-row" title="Искать в каталоге Microsoft обновления для всех важных устройств (дольше)">
-          <input type="checkbox" id="optDeep"><span class="switch"></span><span>Глубокий поиск</span>
-        </label>
-        <label class="switch-row" title="Перед установкой создать точку восстановления Windows">
+        <label class="switch-row" title="Перед установкой Windows запомнит текущее состояние, чтобы при проблемах можно было всё вернуть">
           <input type="checkbox" id="optRestore" checked><span class="switch"></span><span>Точка восстановления</span>
         </label>
         <button class="btn btn-icon" id="btnLog" title="Журнал"><i data-icon="log"></i></button>
@@ -79,7 +79,7 @@
     <main class="list" id="list" aria-live="polite"></main>
 
     <footer class="foot">
-      <span><i data-icon="shield"></i> Только официальные источники Microsoft · проверка цифровой подписи · удаление установочных файлов после установки</span>
+      <span><i data-icon="shield"></i> Драйверы скачиваются только с официальных сайтов (Microsoft, NVIDIA, AMD, Intel) и проверяются по цифровой подписи. После установки скачанные файлы удаляются.</span>
       <span id="version"></span>
     </footer>
   </div>

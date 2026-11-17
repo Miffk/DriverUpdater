@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -24,8 +24,23 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install -r requirements-build.txt
 
+      - name: Download device name databases (pci.ids, usb.ids)
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force driverupdater/data | Out-Null
+          Invoke-WebRequest https://pci-ids.ucw.cz/v2.2/pci.ids -OutFile driverupdater/data/pci.ids -UseBasicParsing
+          Invoke-WebRequest http://www.linux-usb.org/usb.ids -OutFile driverupdater/data/usb.ids -UseBasicParsing
+          Get-ChildItem driverupdater/data
+          python -c "from driverupdater import ids; print(ids.device_name('pci','10DE','2D04'), '|', ids.vendor_name('usb','0416'))"
+
       - name: Unit tests
         run: python -m unittest discover -s tests -t . -v
+
+      - name: Check version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          $v = python -c "import driverupdater; print(driverupdater.__version__)"
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} != version $v" }
 
       - name: Build exe
         run: python -m PyInstaller --noconfirm --clean packaging/DriverUpdater.spec
@@ -41,15 +56,33 @@ jobs:
           dist\DriverUpdater-cli.exe scan --all --save scan.json
           if ($LASTEXITCODE -ne 0) { throw "scan failed" }
 
-      - name: "Smoke test: Microsoft Update Catalog live search"
+      - name: "Live check: Microsoft Update Catalog"
         continue-on-error: true
         run: |
-          python -c "from driverupdater.providers import catalog; r = catalog.search_hwid('PCI\\VEN_8086&DEV_2723'); print(len(r), 'results'); [print(' ', o.title, '|', o.products, '|', o.version, '|', o.date) for o in r[:5]]; assert r, 'no results'; u = catalog.download_urls(r[0].update_id); print(u); assert u, 'no download url'"
+          python -c "from driverupdater.providers import catalog; r = catalog.search_hwid('PCI\\VEN_8086&DEV_2723'); print(len(r), 'results'); [print(' ', o.title, '|', o.products, '|', o.version, '|', o.date) for o in r[:3]]; assert r, 'no results'; u = catalog.download_urls(r[0].update_id); print(u); assert u, 'no download url'"
+
+      - name: "Live check: NVIDIA official driver lookup"
+        continue-on-error: true
+        run: |
+          python -c "from driverupdater.providers import nvidia as n; p = n.products(); print(len(p), 'products'); print([x for x in p if 'RTX 50' in x[2]][:6]); d = n.latest_for('NVIDIA GeForce RTX 5060 Ti', True); print(d); assert d and d['url'], 'no driver'"
+
+      - name: "Live check: AMD and Intel official tools"
+        continue-on-error: true
+        run: |
+          python -c "from driverupdater.providers import vendor_tools as v; [print(k, '->', v.find_link(t)) for k, t in v.TOOLS.items()]"
+          python -c "import urllib.request as u; from driverupdater.providers import vendor_tools as v; r = u.urlopen(v._request(v.TOOLS['intel'].page), timeout=60); print('intel final:', r.geturl(), r.headers.get('Content-Length'))"
 
       - name: "Smoke test: Windows Update driver search"
         continue-on-error: true
         timeout-minutes: 15
-        run: dist\DriverUpdater-cli.exe check --no-catalog --json > check.json; Get-Content check.json -TotalCount 40
+        run: dist\DriverUpdater-cli.exe check --no-catalog --json > check.json; Get-Content check.json -TotalCount 20
+
+      - name: Checksums
+        run: |
+          Get-FileHash dist\DriverUpdater.exe, dist\DriverUpdater-cli.exe -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content -Encoding ascii dist\SHA256SUMS.txt
+          Get-Content dist\SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v5
         with:
@@ -57,12 +90,16 @@ jobs:
           path: |
             dist/DriverUpdater.exe
             dist/DriverUpdater-cli.exe
+            dist/SHA256SUMS.txt
             scan.json
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: DriverUpdater ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
           files: |
             dist/DriverUpdater.exe
             dist/DriverUpdater-cli.exe
+            dist/SHA256SUMS.txt

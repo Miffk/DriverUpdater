@@ -4,7 +4,7 @@
   'use strict';
 
   const GROUPS = [
-    { key: 'required', title: 'Необходимо', hint: 'без них устройства не работают или работают плохо', stat: 'нужно установить' },
+    { key: 'required', title: 'Необходимо', hint: 'без них устройства не работают или работают плохо', stat: 'установить или исправить' },
     { key: 'recommended', title: 'Рекомендуется', hint: 'устройство работает, но обновление заметно полезно', stat: 'полезные обновления' },
     { key: 'optional', title: 'Необязательно', hint: 'по желанию — польза небольшая', stat: 'можно пропустить' },
     { key: 'not_needed', title: 'В порядке', hint: 'ничего делать не нужно', stat: 'устройств без проблем' },
@@ -14,7 +14,7 @@
   const S = {
     info: null, system: null, deviceCount: 0, items: [], byId: new Map(),
     searched: false, busy: true, selected: new Set(), open: new Set(),
-    filter: 'all', query: '', installing: false, install: null,
+    filter: 'all', query: '', installing: false, install: null, collapsed: new Set(), update: null,
   };
 
   // ───────── утилиты ─────────
@@ -83,7 +83,6 @@
   function counts() {
     const c = { required: 0, recommended: 0, optional: 0, not_needed: 0 };
     for (const it of S.items) {
-      if (it.hidden) continue;
       if (it.necessity !== 'not_needed' && it.action === 'none') c.not_needed++;
       else c[it.necessity]++;
     }
@@ -112,7 +111,15 @@
     requestAnimationFrame(() => { $('ringValue').style.strokeDashoffset = String(326.7 * (1 - pct / 100)); });
 
     let text;
-    if (c.required) text = 'Нужно установить ' + c.required + ' ' + plural(c.required, 'драйвер', 'драйвера', 'драйверов') + ' — без них часть устройств не работает';
+    const repairs = S.items.filter((it) => it.action === 'repair').length;
+    const installs = c.required - repairs;
+    if (c.required) {
+      const parts = [];
+      if (installs) parts.push('нужно установить ' + installs + ' ' + plural(installs, 'драйвер', 'драйвера', 'драйверов'));
+      if (repairs) parts.push(repairs + ' ' + plural(repairs, 'устройство работает', 'устройства работают', 'устройств работают') + ' с ошибкой');
+      text = parts.join(', ');
+      text = text.charAt(0).toUpperCase() + text.slice(1);
+    }
     else if (c.recommended) text = 'Всё работает, но есть ' + c.recommended + ' ' + plural(c.recommended, 'полезное обновление', 'полезных обновления', 'полезных обновлений');
     else if (c.optional) text = 'Всё в порядке. Есть ' + c.optional + ' ' + plural(c.optional, 'необязательное обновление', 'необязательных обновления', 'необязательных обновлений');
     else text = 'Все драйверы в порядке — устанавливать ничего не нужно';
@@ -128,13 +135,14 @@
       for (let i = 0; i < 6; i++) box.append(h('div', { class: 'skeleton short' }));
       return;
     }
+    const d = s.display || {};
     const specs = [
-      ['pc', 'Компьютер', [s.manufacturer, s.model].filter(Boolean).join(' ')],
-      ['cpu', 'Процессор', s.cpu],
-      ['gpu', (s.gpus || []).length > 1 ? 'Видеокарты' : 'Видеокарта', (s.gpus || []).join(', ')],
-      ['ram', 'Память', s.ram_gb ? s.ram_gb + ' ГБ' : ''],
-      ['board', 'Материнская плата', s.board],
-      ['windows', 'Система', s.os_name ? s.os_name.replace(/^Microsoft\s+/, '') + ' · сборка ' + s.os_build + ' · ' + s.arch : ''],
+      ['pc', 'Компьютер', d.computer],
+      ['cpu', 'Процессор', d.cpu],
+      ['gpu', Number(d.gpuCount) > 1 ? 'Видеокарты' : 'Видеокарта', d.gpus],
+      ['ram', 'Оперативная память', d.ram],
+      ['board', 'Материнская плата', d.board],
+      ['windows', 'Windows', d.os],
     ];
     specs.forEach(([ic, k, v], i) => {
       box.append(h('div', { class: 'spec', style: 'animation-delay:' + i * 40 + 'ms', title: v || '' },
@@ -163,12 +171,9 @@
   // ───────── список ─────────
   function visibleItems() {
     const q = S.query.trim().toLowerCase();
-    const showOk = $('optShowOk').checked || S.filter === 'not_needed';
     return S.items.filter((it) => {
       const grp = groupOf(it);
       if (S.filter !== 'all' && grp !== S.filter) return false;
-      if (grp === 'not_needed' && !showOk) return false;
-      if (it.hidden && !$('optShowOk').checked) return false;
       const hay = [it.name, it.clsTitle, it.hwid, it.vendor, it.offer && it.offer.title].join(' ').toLowerCase();
       if (q && !hay.includes(q)) return false;
       return true;
@@ -194,7 +199,7 @@
         h('div', { class: 'big' }, icon(allGood ? 'check' : 'search')),
         h('h3', {}, allGood ? 'Все драйверы в порядке' : 'Ничего не найдено'),
         h('div', {}, allGood ? 'Для всех устройств установлены подходящие драйверы. Можно проверить снова позже.'
-          : 'Попробуйте изменить запрос или включите «Исправные».')));
+          : 'Попробуйте написать название по-другому.')));
       return;
     }
     let delay = 0;
@@ -203,15 +208,19 @@
       if (!gi.length) continue;
       const selectable = gi.filter((it) => it.installable && !it.firmware);
       const allOn = selectable.length && selectable.every((it) => S.selected.has(it.id));
-      list.append(h('section', { class: 'group c-' + g.key },
+      const folded = S.collapsed.has(g.key) && !S.query;
+      list.append(h('section', { class: 'group c-' + g.key + (folded ? ' folded' : '') },
         h('div', { class: 'group-head' },
-          h('span', { class: 'dot' }), h('h3', {}, g.title), h('span', { class: 'count' }, gi.length),
+          h('button', {
+            class: 'fold', title: folded ? 'Показать' : 'Свернуть', 'aria-expanded': String(!folded),
+            onclick: () => { if (S.collapsed.has(g.key)) S.collapsed.delete(g.key); else S.collapsed.add(g.key); renderList(); },
+          }, icon('chevron'), h('span', { class: 'dot' }), h('h3', {}, g.title), h('span', { class: 'count' }, gi.length)),
           h('span', { class: 'hint' }, g.hint),
           selectable.length > 1 ? h('button', {
             class: 'link',
             onclick: () => { selectable.forEach((it) => (allOn ? S.selected.delete(it.id) : S.selected.add(it.id))); renderList(); updateSelection(); },
           }, allOn ? 'Снять все' : 'Выбрать все') : null),
-        h('div', { class: 'cards' }, gi.map((it) => deviceCard(it, g.key, Math.min(delay++ * 25, 400))))));
+        folded ? null : h('div', { class: 'cards' }, gi.map((it) => deviceCard(it, g.key, Math.min(delay++ * 25, 400))))));
     }
   }
 
@@ -227,7 +236,7 @@
       h('span', {}, '·'),
       h('span', {}, cur ? verDate(cur.version, '') : 'нет драйвера'));
     if (it.offer) sub.append(h('span', { class: 'arrow' }, '→'), h('span', { class: 'new' }, it.offer.version || fmtDate(it.offer.date) || 'новая версия'));
-    else if (it.action !== 'none') sub.append(h('span', { class: 'arrow' }, '→'), h('span', {}, 'в каталогах Microsoft не найден'));
+    else if (it.action !== 'none') sub.append(h('span', { class: 'arrow' }, '→'), h('span', {}, it.action === 'repair' ? 'нужен перезапуск' : 'у Microsoft нет — см. сайт производителя'));
 
     const meta = h('div', { class: 'meta' });
     if (it.problem && ![22, 24, 45].includes(it.problem)) meta.append(h('span', { class: 'chip warn' }, icon('alert'), 'ошибка, код ' + it.problem));
@@ -246,25 +255,44 @@
       input.addEventListener('change', () => toggleItem(it, input));
       ctl = h('label', { class: 'switch-row', onclick: (e) => e.stopPropagation(), title: sel ? 'Будет установлен' : 'Не устанавливать' },
         input, h('span', { class: 'switch' }));
-    } else if (it.hint) {
-      ctl = h('button', { class: 'btn btn-sm', onclick: (e) => { e.stopPropagation(); openUrl(it.hint.url); } }, icon('external'), 'Сайт');
+    } else if (it.repairable && it.action === 'repair') {
+      ctl = h('button', { class: 'btn btn-sm btn-primary', onclick: (e) => { e.stopPropagation(); doRepair(it); } }, icon('refresh'), 'Исправить');
+    } else if (it.action !== 'none' && it.tool) {
+      ctl = h('button', { class: 'btn btn-sm', onclick: (e) => { e.stopPropagation(); askTool(it); } }, icon('download'), 'Программа ' + it.vendor);
+    } else if (it.action !== 'none' && (it.site || it.searchUrl)) {
+      ctl = h('button', { class: 'btn btn-sm', onclick: (e) => { e.stopPropagation(); openUrl(it.site ? it.site.url : it.searchUrl); } },
+        icon('external'), it.site ? 'Сайт ' + it.site.name : 'Найти');
     }
 
     const facts = h('dl', { class: 'facts' });
     const fact = (k, v) => v && facts.append(h('dt', {}, k), h('dd', {}, v));
     fact('Тип устройства', it.clsTitle);
     fact('Производитель', it.vendor);
-    fact('Установлено', cur ? [verDate(cur.version, cur.date), cur.provider ? '(' + cur.provider + ')' : ''].join(' ') : 'драйвер отсутствует');
+    fact('Модель', it.model && it.model !== it.name ? it.model : '');
+    fact('Установлен драйвер', cur ? [verDate(cur.version, cur.date), cur.provider ? '(от ' + cur.provider + ')' : ''].join(' ') : 'нет');
     if (it.offer) {
       fact('Будет установлено', it.offer.title);
       fact('Источник', it.offer.source + (it.offer.size ? ' · ' + fmtSize(it.offer.size) : ''));
     }
-    fact('ID оборудования', it.hwid);
+    if (it.winName && it.winName !== it.name) fact('Название в Windows', it.winName);
+    fact('Код устройства', it.hwid);
 
     const actions = h('div', { class: 'actions' });
-    if (it.hint) {
-      actions.append(h('button', { class: 'btn btn-sm', onclick: () => openUrl(it.hint.url) }, icon('external'),
-        (it.offer ? 'Самая свежая версия на сайте ' : 'Скачать с сайта ') + it.hint.name));
+    if (it.repairable) {
+      actions.append(h('button', { class: 'btn btn-sm' + (it.action === 'repair' ? ' btn-primary' : ''), onclick: () => doRepair(it) },
+        icon('refresh'), 'Перезапустить устройство'));
+    }
+    if (it.tool) {
+      actions.append(h('button', { class: 'btn btn-sm', onclick: () => askTool(it) }, icon('download'),
+        'Проверить программой ' + it.vendor));
+    }
+    if (it.site && (it.action !== 'none' || it.cls === 'Display')) {
+      actions.append(h('button', { class: 'btn btn-sm', onclick: () => openUrl(it.site.url) }, icon('external'),
+        'Сайт ' + it.site.name + ' с драйверами'));
+    }
+    if (it.searchUrl && it.action !== 'none' && !it.offer) {
+      actions.append(h('button', { class: 'btn btn-sm btn-ghost', onclick: () => openUrl(it.searchUrl) }, icon('search'),
+        it.site ? 'Найти этот драйвер на сайте ' + it.site.name : 'Найти драйвер в интернете'));
     }
 
     const card = h('article', {
@@ -329,7 +357,6 @@
     $('dock').hidden = S.busy || !n || !S.searched;
     $('dockCount').textContent = n;
     $('dockText').textContent = plural(n, 'драйвер выбран', 'драйвера выбрано', 'драйверов выбрано') + (size ? ' · примерно ' + fmtSize(size) : '');
-    $('optDeep').disabled = S.busy;
   }
 
   function renderAll() { renderHero(); renderSystem(); renderSummary(); renderList(); updateSelection(); }
@@ -366,7 +393,7 @@
     S.busy = true;
     S.filter = 'all';
     renderAll();
-    a.start($('optDeep').checked).then((ok) => { if (!ok) toast('Подождите — предыдущая операция ещё идёт.', 'warn'); });
+    a.start(false).then((ok) => { if (!ok) toast('Подождите — предыдущая операция ещё идёт.', 'warn'); });
   }
 
   function askInstall() {
@@ -394,14 +421,76 @@
       if (res && res.ok) return;
       const err = res && res.error;
       if (err === 'admin') {
-        modal({
-          tone: 'recommended', iconName: 'shield', title: 'Нужны права администратора',
-          body: h('p', {}, 'Windows разрешает устанавливать драйверы только с правами администратора. Перезапустить программу с ними?'),
-          actions: [{ text: 'Отмена' }, { text: 'Перезапустить', kind: 'primary', run: () => api().relaunch_as_admin() }],
-        });
+        needAdmin();
       } else {
         toast(err || 'Не удалось начать установку', 'error');
       }
+    });
+  }
+
+  function needAdmin() {
+    modal({
+      tone: 'recommended', iconName: 'shield', title: 'Нужны права администратора',
+      body: h('p', {}, 'Windows разрешает менять драйверы и устройства только с правами администратора. Перезапустить программу с ними?'),
+      actions: [{ text: 'Отмена' }, { text: 'Перезапустить', kind: 'primary', run: () => api().relaunch_as_admin() }],
+    });
+  }
+
+  function doRepair(it) {
+    modal({
+      tone: 'recommended', iconName: 'refresh', title: 'Перезапустить устройство?',
+      body: [h('p', {}, '«' + it.name + '» будет на пару секунд отключено и включено снова — как если бы вы вынули его и вставили обратно.'),
+        h('p', {}, 'Если это клавиатура или мышь, они могут ненадолго перестать отвечать.')],
+      actions: [{ text: 'Отмена' }, {
+        text: 'Перезапустить', kind: 'primary', icon: 'refresh',
+        run: () => api().repair(it.id).then((res) => {
+          if (res && res.ok) { S.busy = true; updateSelection(); setStatus('Перезапускаю устройство…'); return; }
+          if (res && res.error === 'admin') needAdmin(); else toast((res && res.error) || 'Не получилось', 'error');
+        }),
+      }],
+    });
+  }
+
+  function askTool(it) {
+    modal({
+      tone: 'optional', iconName: 'download', title: it.toolTitle,
+      body: [h('p', {}, 'У ' + it.vendor + ' есть своя официальная бесплатная программа, которая сама находит и ставит самые свежие драйверы для их устройств.'),
+        h('p', {}, 'Мы скачаем её с официального сайта ' + it.vendor + ', проверим подпись и запустим. Дальше следуйте подсказкам программы. Когда закроете её, установочный файл будет удалён.')],
+      actions: [{ text: 'Отмена' }, {
+        text: 'Скачать и запустить', kind: 'primary', icon: 'download',
+        run: () => api().run_tool(it.tool).then((res) => {
+          if (res && res.ok) { S.busy = true; updateSelection(); return; }
+          toast((res && res.error) || 'Не получилось', 'error');
+        }),
+      }],
+    });
+  }
+
+  async function checkUpdate() {
+    const a = api();
+    if (!a || !a.check_update) return;
+    const u = await a.check_update();
+    if (!u || !u.available) return;
+    S.update = u;
+    $('updateText').textContent = 'Вышла новая версия программы — ' + u.version + ' (у вас ' + u.current + ')';
+    $('updateBar').hidden = false;
+  }
+
+  function showNotes() {
+    const u = S.update;
+    modal({
+      tone: 'optional', iconName: 'sparkle', title: 'Что нового в версии ' + u.version,
+      body: h('div', { class: 'notes' }, ...(u.notes || 'Описание изменений есть на странице релиза.').split(/\r?\n/)
+        .filter((l) => l.trim()).map((l) => h('p', {}, l.replace(/^[-*#\s]+/, '')))),
+      actions: [{ text: 'Закрыть' }, { text: 'Обновить', kind: 'primary', icon: 'download', run: applyUpdate }],
+    });
+  }
+
+  function applyUpdate() {
+    api().apply_update().then((res) => {
+      if (res && res.manual) { toast('Открыл страницу загрузки новой версии в браузере.', 'ok'); return; }
+      if (res && res.ok) { S.busy = true; updateSelection(); $('updateBar').hidden = true; return; }
+      toast((res && res.error) || 'Не удалось обновить', 'error');
     });
   }
 
@@ -500,6 +589,18 @@
       S.install = null;
       modal({ tone: 'required', iconName: 'alert', title: 'Установка не начата', body: h('p', {}, d.message) });
     },
+    repair_done: (d) => {
+      modal({
+        tone: d.ok ? 'not_needed' : 'recommended', iconName: d.ok ? 'check' : 'alert',
+        title: d.ok ? 'Готово' : 'Не помогло', body: h('p', {}, d.message),
+        actions: [{ text: 'Проверить снова', kind: 'primary', run: () => setTimeout(start, 50) }],
+      });
+    },
+    tool_done: (d) => {
+      toast(d.message, d.ok ? 'ok' : 'error');
+      if (d.ok) setTimeout(start, 500);
+    },
+    update_ready: (d) => toast('Версия ' + d.version + ' установлена. Перезапускаю программу…', 'ok'),
     close_blocked: () => toast('Идёт установка драйверов — дождитесь её окончания.', 'warn'),
   };
 
@@ -519,9 +620,10 @@
     $('btnInstall').addEventListener('click', askInstall);
     $('dockInstall').addEventListener('click', askInstall);
     $('dockClear').addEventListener('click', () => { S.selected.clear(); renderList(); updateSelection(); });
+    $('updateApply').addEventListener('click', applyUpdate);
+    $('updateNotes').addEventListener('click', showNotes);
     $('btnLog').addEventListener('click', () => $('drawer').classList.add('open'));
     $('drawerClose').addEventListener('click', () => $('drawer').classList.remove('open'));
-    $('optShowOk').addEventListener('change', renderList);
     let t;
     $('search').addEventListener('input', (e) => { clearTimeout(t); t = setTimeout(() => { S.query = e.target.value; renderList(); }, 120); });
     document.addEventListener('keydown', (e) => {
@@ -540,6 +642,7 @@
     $('demoBadge').hidden = !S.info.demo;
     if (!S.info.isWindows && !S.info.demo) setStatus('Программа работает только в Windows', 'error');
     start();
+    checkUpdate().catch(() => {});
   }
 
   bindUi();
