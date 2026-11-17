@@ -154,6 +154,25 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(info["asset"]["sha256"], "ab" * 32)
         self.assertFalse(info["canAutoUpdate"])  # запущено не из exe
 
+    def test_check_without_api_uses_release_page_redirect(self):
+        class Resp:
+            def geturl(self):
+                return "https://github.com/Miffk/DriverUpdater/releases/tag/v9.9.9"
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        with mock.patch("urllib.request.urlopen", return_value=Resp()), \
+                mock.patch.object(updater, "_get", return_value="- новое".encode()):
+            info = updater.check()
+        self.assertTrue(info["available"])
+        self.assertEqual(info["version"], "9.9.9")
+        self.assertEqual(info["asset"]["url"],
+                         "https://github.com/Miffk/DriverUpdater/releases/download/v9.9.9/DriverUpdater.exe")
+        self.assertTrue(info["asset"]["sums_url"].endswith("/v9.9.9/SHA256SUMS.txt"))
+        self.assertEqual(info["notes"], "- новое")
+
     def test_old_release_not_offered(self):
         info = updater.parse_release(dict(self.RELEASE, tag_name="v0.0.1"), "DriverUpdater.exe")
         self.assertFalse(info["available"])

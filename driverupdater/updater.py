@@ -34,8 +34,13 @@ def _ver(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in re.findall(r"\d+", v)[:4]) or (0,)
 
 
-def is_newer(remote: str, local: str = __version__) -> bool:
-    return _ver(remote) > _ver(local)
+def local_version() -> str:
+    # Только для автотеста обновления в сборке: «притвориться» старой версией.
+    return os.environ.get("DRIVERUPDATER_PRETEND_VERSION") or __version__
+
+
+def is_newer(remote: str, local: str | None = None) -> bool:
+    return _ver(remote) > _ver(local or local_version())
 
 
 def _get(url: str, accept: str = "application/vnd.github+json") -> bytes:
@@ -75,8 +80,48 @@ def parse_release(data: dict, want: str) -> dict:
     }
 
 
+TAG_RE = re.compile(r"/releases/tag/(v?\d+(?:\.\d+){1,3})/?$")
+
+
+def latest_tag() -> str:
+    """Последний релиз узнаём по обычной странице github.com/…/releases/latest: она
+    перенаправляет на /releases/tag/vX.Y.Z. В отличие от API GitHub, у неё нет лимита
+    60 запросов в час на адрес (его легко исчерпать за общим адресом провайдера)."""
+    req = urllib.request.Request(RELEASES_PAGE, headers={"User-Agent": UA, "Accept": "text/html"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        final = resp.geturl()
+    m = TAG_RE.search(urllib.parse.urlparse(final).path)
+    if not m:
+        raise RuntimeError(f"не удалось определить последнюю версию по адресу {final}")
+    return m.group(1)
+
+
+def from_tag(tag: str, want: str) -> dict:
+    """Сведения о релизе без API: прямые ссылки на файлы релиза."""
+    base = f"https://github.com/{REPO}/releases/download/{tag}"
+    notes = ""
+    try:
+        notes = _get(f"{base}/RELEASE_NOTES.md", "text/plain").decode("utf-8", "replace")
+    except OSError:
+        pass
+    return {
+        "version": tag.lstrip("vV"),
+        "available": is_newer(tag),
+        "notes": notes,
+        "page": f"https://github.com/{REPO}/releases/tag/{tag}",
+        "asset": {"name": want, "url": f"{base}/{want}", "size": 0, "sha256": "",
+                  "sums_url": f"{base}/SHA256SUMS.txt"},
+        "canAutoUpdate": current_exe() is not None,
+        "current": __version__,
+    }
+
+
 def check() -> dict:
-    return parse_release(json.loads(_get(API_LATEST)), asset_name())
+    try:
+        return from_tag(latest_tag(), asset_name())
+    except (OSError, RuntimeError):
+        # запасной путь — API GitHub (даёт ещё и контрольную сумму от самого GitHub)
+        return parse_release(json.loads(_get(API_LATEST)), asset_name())
 
 
 def expected_hash(info: dict) -> str:

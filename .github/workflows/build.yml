@@ -122,6 +122,7 @@ jobs:
             dist/DriverUpdater.exe
             dist/DriverUpdater-cli.exe
             dist/SHA256SUMS.txt
+            RELEASE_NOTES.md
 
   # Проверка самообновления на настоящей Windows: берём ПРЕДЫДУЩИЙ релиз и обновляем его
   # до только что опубликованного — так, как это сделает пользователь.
@@ -145,9 +146,28 @@ jobs:
       - name: Self-update previous version to the new one
         run: |
           if (-not (Test-Path old\DriverUpdater-cli.exe)) { exit 0 }
-          old\DriverUpdater-cli.exe self-update
-          if ($LASTEXITCODE -ne 0) { throw "self-update завершился с кодом $LASTEXITCODE" }
+          $out = (old\DriverUpdater-cli.exe self-update 2>&1) -join "`n"
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) {
+            # Версии до 0.3.3 спрашивали API GitHub, а у общих серверов сборки лимит API часто исчерпан.
+            if ($out -match "rate limit") { Write-Warning "Лимит API GitHub на сервере сборки — старая версия проверку пропускает"; exit 0 }
+            throw "self-update завершился с кодом $LASTEXITCODE"
+          }
           $v = (old\DriverUpdater-cli.exe --version) -join " "
           Write-Host "После обновления: $v"
           if ($v -notmatch [regex]::Escape("${{ needs.build.outputs.version }}")) { throw "ожидалась версия ${{ needs.build.outputs.version }}, получено: $v" }
           Get-ChildItem old
+
+      - name: Self-update with the NEW updater code (pretend to be 0.0.1)
+        env:
+          DRIVERUPDATER_PRETEND_VERSION: "0.0.1"
+        run: |
+          gh release download v${{ needs.build.outputs.version }} -R ${{ github.repository }} -p DriverUpdater-cli.exe -p SHA256SUMS.txt -D new
+          new\DriverUpdater-cli.exe self-update
+          if ($LASTEXITCODE -ne 0) { throw "self-update завершился с кодом $LASTEXITCODE" }
+          if (-not (Test-Path new\DriverUpdater-cli.exe.old)) { throw "старый exe не был заменён" }
+          $want = (Select-String -Path new\SHA256SUMS.txt -Pattern "DriverUpdater-cli.exe").Line.Split(" ")[0]
+          $got = (Get-FileHash new\DriverUpdater-cli.exe -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $want) { throw "после обновления контрольная сумма не совпала: $got != $want" }
+          $v = (new\DriverUpdater-cli.exe --version) -join " "
+          Write-Host "Обновление сработало: $v; старый файл переименован в .old"
