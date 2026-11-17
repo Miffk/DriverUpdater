@@ -83,6 +83,7 @@ class BridgeTests(unittest.TestCase):
 
         def fake_install(plan, log, progress):
             for a in plan:
+                progress(installer.offer_key(a), "running", "Скачивание · 50%", stage="download", percent=50.0)
                 progress(installer.offer_key(a), "ok", "установлен")
             return fake
 
@@ -96,7 +97,9 @@ class BridgeTests(unittest.TestCase):
         types = [t for t, _ in events]
         self.assertIn("install_started", types)
         self.assertIn("install_done", types)
-        self.assertEqual(sum(1 for t in types if t == "progress"), len(ids))
+        prog = [d for t, d in events if t == "progress"]
+        self.assertEqual(len(prog), 2 * len(ids))
+        self.assertEqual((prog[0]["stage"], prog[0]["percent"]), ("download", 50.0))
 
     def test_open_url_only_https(self):
         b, _ = make_bridge()

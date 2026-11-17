@@ -81,6 +81,30 @@ class VendorToolsTests(unittest.TestCase):
         self.assertIn("/whql/", link)
 
 
+class ProgressTests(unittest.TestCase):
+    def test_download_reports_percent_and_stream_events(self):
+        from driverupdater import installer, powershell
+        steps = []
+        cb = installer.download_step(lambda stage, msg, **kw: steps.append((stage, msg, kw)))
+        cb(400 << 20, 800 << 20)
+        self.assertEqual(steps[0][0], "download")
+        self.assertIn("50%", steps[0][1])
+        self.assertIn("400 МБ из 800 МБ", steps[0][1])
+
+        class P:
+            def __init__(self, *a, **k):
+                self.stdout = [b'@@{"update_id":"x","stage":"download"}\n', b"noise\n",
+                               b'@@{"update_id":"x","stage":"result","result_code":2}\n']
+            def wait(self, timeout=None):
+                return 0
+
+        got = []
+        with mock.patch("subprocess.Popen", P), mock.patch.object(powershell, "_exe", return_value="pwsh"):
+            rest = powershell.run_stream("x", got.append)
+        self.assertEqual([e["stage"] for e in got], ["download", "result"])
+        self.assertEqual(rest, "noise")
+
+
 class NamesTests(unittest.TestCase):
     def test_brands(self):
         self.assertEqual(names.brand("Micro-Star International Co., Ltd."), "MSI")

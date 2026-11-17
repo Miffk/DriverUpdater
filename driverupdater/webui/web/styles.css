@@ -344,6 +344,22 @@ input:disabled + .switch { opacity: .4; }
 @keyframes shine { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 .install-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .install-list li { display: grid; grid-template-columns: 24px 1fr; gap: 10px; align-items: start; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
+.install-title { flex: 1; min-width: 0; }
+.install-title p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.install-pct { font-size: 30px; font-weight: 700; letter-spacing: -.02em; background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent; font-variant-numeric: tabular-nums; }
+.install-sub { margin: -6px 0 12px; color: var(--muted); font-size: 12.5px; }
+.install-list .body { min-width: 0; }
+.install-list .row1 { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.install-list .stage { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.install-list li[data-state="running"] .stage { color: var(--accent); }
+.install-list li[data-state="ok"] .stage { color: var(--green); }
+.install-list li[data-state="error"] .stage { color: var(--red); }
+.install-list .mini { height: 4px; border-radius: 999px; background: var(--border); margin-top: 8px; overflow: hidden; display: none; }
+.install-list li[data-state="running"] .mini { display: block; }
+.install-list .mini > span { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent-grad); transition: width .3s ease; }
+.install-list li.indeterminate .mini > span { width: 35% !important; animation: indet 1.3s ease-in-out infinite; }
+@keyframes indet { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.install-list li[data-state="waiting"] { opacity: .65; }
 .install-list .st { width: 20px; height: 20px; display: grid; place-items: center; margin-top: 1px; color: var(--muted); }
 .install-list li[data-state="running"] { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .install-list li[data-state="running"] .st::before { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent); animation: spin2 .8s linear infinite; }

@@ -6,6 +6,7 @@ import ctypes
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -45,12 +46,36 @@ def offer_key(a: Assessment) -> str:
     return f"{a.offer.source}:{a.offer.update_id}" if a.offer else ""
 
 
-# progress(key, state, message): state — "running" | "ok" | "error" | "cleanup"
-Progress = Callable[[str, str, str], None]
+# progress(key, state, message, stage=..., percent=..., done=..., total=...):
+#   state — "waiting" | "running" | "ok" | "error" | "cleanup";
+#   stage — "download" | "verify" | "extract" | "install" | "check" (что именно сейчас происходит);
+#   percent — 0..100, если известен (скачивание); done/total — байты.
+Progress = Callable[..., None]
+# step(stage, message, percent=None, done=None, total=None) — то же для одного драйвера.
+Step = Callable[..., None]
 
 
-def _no_progress(key: str, state: str, message: str) -> None:
+def _no_progress(key: str, state: str, message: str, **kw) -> None:
     pass
+
+
+def _no_step(stage: str, message: str, **kw) -> None:
+    pass
+
+
+def mb(n: int) -> str:
+    return f"{n / (1 << 20):.0f} МБ" if n >= (1 << 20) else f"{max(n, 0) / 1024:.0f} КБ"
+
+
+def download_step(step: Step, what: str = "Скачивание"):
+    """Колбэк для download(): превращает байты в «Скачивание · 45% · 390 из 870 МБ»."""
+    def on_bytes(done: int, total: int) -> None:
+        if total:
+            pct = 100 * done / total
+            step("download", f"{what} · {pct:.0f}% · {mb(done)} из {mb(total)}", percent=pct, done=done, total=total)
+        else:
+            step("download", f"{what} · {mb(done)}", done=done)
+    return on_bytes
 
 
 @dataclass
@@ -113,7 +138,8 @@ def verify_signature(path: Path, signers: tuple[str, ...] = TRUSTED_SIGNERS) -> 
     return signer
 
 
-def download(url: str, dest_dir: Path, hosts: tuple[str, ...] | None = None) -> Path:
+def download(url: str, dest_dir: Path, hosts: tuple[str, ...] | None = None,
+             on_bytes: Callable[[int, int], None] | None = None) -> Path:
     allowed = host_allowed(url) if hosts is None else (urllib.parse.urlparse(url).hostname or "") in hosts
     if not allowed:
         raise RuntimeError(f"адрес не из официального источника: {url}")
@@ -127,7 +153,15 @@ def download(url: str, dest_dir: Path, hosts: tuple[str, ...] | None = None) -> 
         try:
             req = urllib.request.Request(candidate, headers={"User-Agent": catalog.UA})
             with urllib.request.urlopen(req, timeout=300) as resp, open(dest, "wb") as fh:
-                shutil.copyfileobj(resp, fh, 1 << 20)
+                total = int(resp.headers.get("Content-Length") or 0)
+                done, last = 0, 0.0
+                while chunk := resp.read(1 << 18):
+                    fh.write(chunk)
+                    done += len(chunk)
+                    now = time.monotonic()
+                    if on_bytes and (now - last > 0.25 or done == total):
+                        on_bytes(done, total)
+                        last = now
             return dest
         except OSError as e:
             last_err = e
@@ -152,10 +186,11 @@ def pnputil_install(folder: Path) -> tuple[int, str]:
     return proc.returncode, _console(proc.stdout)
 
 
-def install_from_catalog(a: Assessment, workspace: Path, log: Log) -> InstallResult:
+def install_from_catalog(a: Assessment, workspace: Path, log: Log, step: Step = _no_step) -> InstallResult:
     off = a.offer
     assert off is not None
     name = a.device.name
+    step("download", "Получаю ссылку из каталога Microsoft…", percent=0)
     urls = catalog.download_urls(off.update_id)
     if not urls:
         return InstallResult(name, False, "каталог не выдал ссылку на скачивание")
@@ -164,7 +199,8 @@ def install_from_catalog(a: Assessment, workspace: Path, log: Log) -> InstallRes
     files = pkg_dir / "files"
     for url in urls:
         log(f"    скачивание: {url}")
-        f = download(url, pkg_dir)
+        f = download(url, pkg_dir, on_bytes=download_step(step))
+        step("verify", "Проверка цифровой подписи")
         try:
             signer = verify_signature(f)
             log(f"    подпись архива в порядке: {signer.split(',')[0]}")
@@ -173,6 +209,7 @@ def install_from_catalog(a: Assessment, workspace: Path, log: Log) -> InstallRes
                 raise
             signer = ""  # старые архивы не подписаны — проверим .cat внутри
         if f.suffix.lower() == ".cab":
+            step("extract", "Распаковка")
             expand_cab(f, files)
         f.unlink(missing_ok=True)
         if not signer:
@@ -184,6 +221,7 @@ def install_from_catalog(a: Assessment, workspace: Path, log: Log) -> InstallRes
             log(f"    подпись драйвера (WHQL) в порядке: {len(cats)} файл(ов) .cat")
     if not list(files.rglob("*.inf")):
         return InstallResult(name, False, "в пакете нет .inf — это не драйвер, пропущено")
+    step("install", "Установка драйвера")
     code, out = pnputil_install(pkg_dir / "files")
     if code in (PNP_OK, PNP_REBOOT):
         return InstallResult(name, True, f"установлен {off.version or off.title}", code == PNP_REBOOT)
@@ -200,7 +238,7 @@ def installed_version(instance_id: str) -> str:
     return (out or {}).get("v", "")
 
 
-def install_nvidia(a: Assessment, workspace: Path, log: Log) -> InstallResult:
+def install_nvidia(a: Assessment, workspace: Path, log: Log, step: Step = _no_step) -> InstallResult:
     """Драйвер с официального сайта NVIDIA: скачать → проверить подпись NVIDIA →
     тихая установка → сверить установленную версию → удалить установщик."""
     from .providers import nvidia
@@ -209,13 +247,17 @@ def install_nvidia(a: Assessment, workspace: Path, log: Log) -> InstallResult:
     pkg = workspace / ("nvidia_" + off.version)
     pkg.mkdir(parents=True, exist_ok=True)
     log(f"    скачивание с сайта NVIDIA: {off.download_url}")
-    exe = download(off.download_url, pkg, hosts=nvidia.DOWNLOAD_HOSTS)
+    exe = download(off.download_url, pkg, hosts=nvidia.DOWNLOAD_HOSTS,
+                   on_bytes=download_step(step, "Скачивание с сайта NVIDIA"))
+    step("verify", "Проверка цифровой подписи NVIDIA")
     signer = verify_signature(exe, (nvidia.SIGNER,))
     log(f"    подпись в порядке: {signer.split(',')[0]}")
     log("    установка (несколько минут, экран может мигать)…")
+    step("install", "Установка — обычно 2–5 минут, экран может мигать")
     proc = subprocess.run([str(exe), "-s", "-noreboot", "-noeula"], capture_output=True,
                           timeout=3600, **powershell.NO_WINDOW)
     exe.unlink(missing_ok=True)
+    step("check", "Проверяю, что новая версия встала")
     now = nvidia.windows_to_nvidia(installed_version(a.device.instance_id))
     if now == off.version:
         return InstallResult(a.device.name, True, f"установлен драйвер NVIDIA {off.version}", reboot=True)
@@ -276,45 +318,58 @@ def install(plan: list[Assessment], log: Log = print, progress: Progress = _no_p
     started = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     workspace = Path(tempfile.mkdtemp(prefix="DriverUpdater_"))
     try:
+        for a in plan:
+            progress(offer_key(a), "waiting", "в очереди")
         wu = [a for a in plan if a.offer and a.offer.source == "windows_update"]
         cat = [a for a in plan if a.offer and a.offer.source in ("catalog", "nvidia")]
 
         if wu:
             log(f"\n[Windows Update] установка {len(wu)} драйвер(ов)…")
             by_id = {a.offer.update_id: a for a in wu}  # type: ignore[union-attr]
-            for a in wu:  # Windows Update ставит пакеты одной пачкой
-                progress(offer_key(a), "running", "скачивание и установка через Windows Update")
+            def on_event(ev: dict) -> None:
+                a = by_id.get(ev.get("update_id", ""))
+                if not a:
+                    return
+                stage = ev.get("stage")
+                if stage == "download":
+                    progress(offer_key(a), "running", "Скачивание через Windows Update", stage="download")
+                elif stage == "install":
+                    progress(offer_key(a), "running", "Установка", stage="install", percent=None)
+                elif stage == "result":
+                    by_id.pop(ev["update_id"], None)
+                    ok = ev["result_code"] in (2, 3)
+                    msg = "установлен" if ok else f"ошибка 0x{ev['hresult'] & 0xFFFFFFFF:08X}"
+                    done(a, InstallResult(a.device.name, ok, msg, ev["reboot_required"]))
+                    log(f"  {'✔' if ok else '✘'} {ev.get('title', a.device.name)}: {msg}")
+
             try:
-                results = windows_update.install(list(by_id))
-                for r in results:
-                    a = by_id.pop(r["update_id"], None)
-                    ok = r["result_code"] in (2, 3)
-                    msg = "установлен" if ok else f"ошибка 0x{r['hresult'] & 0xFFFFFFFF:08X}"
-                    done(a, InstallResult(a.device.name if a else r["title"], ok, msg,
-                                          r["reboot_required"], key=f"windows_update:{r['update_id']}"))
-                    log(f"  {'✔' if ok else '✘'} {r['title']}: {msg}")
-                for a in by_id.values():  # Windows Update уже не предлагает этот пакет
+                windows_update.install(list(by_id), on_event)
+                for a in list(by_id.values()):  # Windows Update уже не предлагает этот пакет
                     done(a, InstallResult(a.device.name, False,
                                           "пакет больше не предлагается Windows Update — повторите поиск"))
             except powershell.PowerShellError as e:
-                for a in by_id.values():
+                for a in list(by_id.values()):
                     done(a, InstallResult(a.device.name, False, str(e)[:300]))
                 log(f"  ✘ Windows Update: {e}")
 
         for a in cat:
             nv = a.offer.source == "nvidia"  # type: ignore[union-attr]
             log(f"\n[{'NVIDIA' if nv else 'Update Catalog'}] {a.device.name}")
-            progress(offer_key(a), "running",
-                     "скачивание с сайта NVIDIA и установка" if nv else "скачивание из каталога Microsoft")
+            key = offer_key(a)
+
+            def step(stage: str, message: str, _key: str = key, **kw) -> None:
+                progress(_key, "running", message, stage=stage, **kw)
+
             try:
-                res = install_nvidia(a, workspace, log) if nv else install_from_catalog(a, workspace, log)
+                res = (install_nvidia(a, workspace, log, step) if nv
+                       else install_from_catalog(a, workspace, log, step))
             except (RuntimeError, OSError, powershell.PowerShellError) as e:
                 res = InstallResult(a.device.name, False, str(e)[:300])
             done(a, res)
             log(f"  {'✔' if res.ok else '✘'} {res.message}")
     finally:
         log("\nУдаление установочных файлов…")
-        progress("", "cleanup", "удаление установочных файлов")
+        progress("", "cleanup", "Удаление установочных файлов", stage="cleanup")
         remove_workspace(workspace, report)
         if any(a.offer and a.offer.source == "windows_update" for a in plan):
             try:

@@ -38,36 +38,32 @@ $out = foreach ($u in $res.Updates) {
 ConvertTo-Json -InputObject @($out) -Depth 3 -Compress
 """
 
+# Ставим по одному обновлению, чтобы показывать этап каждого: скачивание → установка → итог.
+# Строки «@@{json}» читает powershell.run_stream().
 INSTALL_SCRIPT = r"""
+function Say($o) { [Console]::Out.WriteLine('@@' + (ConvertTo-Json -InputObject $o -Compress)); [Console]::Out.Flush() }
 $ids = @(__IDS__)
 $session  = New-Object -ComObject Microsoft.Update.Session
 $session.ClientApplicationID = 'DriverUpdater'
 $searcher = $session.CreateUpdateSearcher()
 $res = $searcher.Search("IsInstalled=0 and Type='Driver'")
-$coll = New-Object -ComObject Microsoft.Update.UpdateColl
 foreach ($u in $res.Updates) {
-  if ($ids -contains $u.Identity.UpdateID) {
-    if (-not $u.EulaAccepted) { $u.AcceptEula() }
-    [void]$coll.Add($u)
-  }
-}
-$out = @()
-if ($coll.Count -gt 0) {
-  $dl = $session.CreateUpdateDownloader(); $dl.Updates = $coll; [void]$dl.Download()
-  $inst = $session.CreateUpdateInstaller(); $inst.Updates = $coll
+  $id = [string]$u.Identity.UpdateID
+  if (-not ($ids -contains $id)) { continue }
+  if (-not $u.EulaAccepted) { $u.AcceptEula() }
+  $one = New-Object -ComObject Microsoft.Update.UpdateColl
+  [void]$one.Add($u)
+  Say ([ordered]@{ update_id = $id; stage = 'download' })
+  $dl = $session.CreateUpdateDownloader(); $dl.Updates = $one; [void]$dl.Download()
+  Say ([ordered]@{ update_id = $id; stage = 'install' })
+  $inst = $session.CreateUpdateInstaller(); $inst.Updates = $one
   $r = $inst.Install()
-  for ($i = 0; $i -lt $coll.Count; $i++) {
-    $ur = $r.GetUpdateResult($i)
-    $out += [ordered]@{
-      update_id       = [string]$coll.Item($i).Identity.UpdateID
-      title           = [string]$coll.Item($i).Title
-      result_code     = [int]$ur.ResultCode      # 2 = успешно, 3 = с ошибками, 4 = ошибка
-      hresult         = [int64]$ur.HResult
-      reboot_required = [bool]$ur.RebootRequired
-    }
-  }
+  $ur = $r.GetUpdateResult(0)
+  Say ([ordered]@{
+    update_id = $id; stage = 'result'; title = [string]$u.Title
+    result_code = [int]$ur.ResultCode; hresult = [int64]$ur.HResult; reboot_required = [bool]$ur.RebootRequired
+  })
 }
-ConvertTo-Json -InputObject @($out) -Depth 3 -Compress
 """
 
 # Удаляет из кэша Windows Update только то, что было скачано во время нашей сессии.
@@ -117,9 +113,18 @@ def search() -> list[DriverOffer]:
     return parse_search(powershell.run_json(SEARCH_SCRIPT, timeout=900))
 
 
-def install(update_ids: list[str]) -> list[dict]:
+def install(update_ids: list[str], on_event=lambda ev: None) -> list[dict]:
+    """Ставит обновления по одному; on_event получает {update_id, stage: download|install|result, …}."""
     ids = ", ".join(powershell.ps_quote(i) for i in update_ids)
-    return powershell.run_json(INSTALL_SCRIPT.replace("__IDS__", ids), timeout=3600) or []
+    results: list[dict] = []
+
+    def collect(ev: dict) -> None:
+        if ev.get("stage") == "result":
+            results.append(ev)
+        on_event(ev)
+
+    powershell.run_stream(INSTALL_SCRIPT.replace("__IDS__", ids), collect, timeout=3 * 3600)
+    return results
 
 
 def cleanup_cache(since_iso: str) -> dict:

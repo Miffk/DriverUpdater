@@ -214,8 +214,9 @@ class Bridge:
             self._emit("phase", {"phase": "install", "text": "Устанавливаю драйверы…"})
             rep = installer.install(
                 plan, log=self._log,
-                progress=lambda key, state, msg: self._emit("progress", {"key": key, "state": state,
-                                                                          "message": msg}))
+                progress=lambda key, state, msg, **kw: self._emit(
+                    "progress", {"key": key, "state": state, "message": msg,
+                                 **{k: v for k, v in kw.items() if v is not None}}))
             self._emit("install_done", {
                 "results": [{"key": r.key, "name": r.name, "ok": r.ok, "message": r.message}
                             for r in rep.results],

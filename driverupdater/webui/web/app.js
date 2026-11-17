@@ -495,42 +495,139 @@
   }
 
   // ───────── экран установки ─────────
+  // Этапы установки одного драйвера: название и доля общего пути (для общего процента).
+  const STAGES = {
+    waiting: { label: 'В очереди', from: 0, to: 0 },
+    download: { label: 'Скачивание', from: 0, to: 0.6 },
+    verify: { label: 'Проверка подписи', from: 0.6, to: 0.65 },
+    extract: { label: 'Распаковка', from: 0.65, to: 0.7 },
+    install: { label: 'Установка', from: 0.7, to: 0.95 },
+    check: { label: 'Проверка', from: 0.95, to: 0.99 },
+  };
+
+  function fmtElapsed(ms) {
+    const s = Math.floor(ms / 1000);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
   function showInstaller(keys) {
     const byKey = new Map();
     S.items.forEach((it) => { if (it.offer && !byKey.has(it.offer.key)) byKey.set(it.offer.key, it); });
-    S.install = { keys, done: 0, states: {} };
+    S.install = { keys, states: {}, frac: {}, current: null, stageAt: Date.now(), timer: null };
     $('installTitle').textContent = 'Установка драйверов';
     $('installStep').textContent = 'Подготовка…';
+    $('installPct').textContent = '0%';
+    $('installSub').textContent = '0 из ' + keys.length + ' ' + plural(keys.length, 'драйвера', 'драйверов', 'драйверов');
     $('installSpinner').classList.remove('done');
     $('installSpinner').replaceChildren();
-    $('installBar').style.width = '3%';
+    $('installBar').style.width = '2%';
     $('installList').replaceChildren(...keys.map((k) => {
       const it = byKey.get(k);
-      return h('li', { 'data-key': k, 'data-state': 'pending' },
+      return h('li', { 'data-key': k, 'data-state': 'waiting' },
         h('span', { class: 'st' }, icon('download')),
-        h('div', {}, h('div', { class: 'nm' }, it ? it.name : k),
-          h('div', { class: 'msg' }, it ? 'ожидает · ' + it.offer.title : 'ожидает')));
+        h('div', { class: 'body' },
+          h('div', { class: 'row1' }, h('span', { class: 'nm' }, it ? it.name : k), h('span', { class: 'stage' }, 'В очереди')),
+          h('div', { class: 'msg' }, it ? it.offer.title : ''),
+          h('div', { class: 'mini' }, h('span', {}))));
     }));
     $('installFoot').replaceChildren(h('span', { class: 'warn' }, icon('alert'), 'Не выключайте компьютер до окончания установки'));
     $('installer').hidden = false;
+    S.install.timer = setInterval(tickInstall, 1000);
+  }
+
+  // Раз в секунду: показываем, сколько длится текущий этап (установка NVIDIA идёт минутами).
+  function tickInstall() {
+    const I = S.install;
+    if (!I || !I.current) return;
+    const li = $('installList').querySelector('li[data-key="' + CSS.escape(I.current) + '"]');
+    if (!li || li.dataset.state !== 'running') return;
+    const stage = li.dataset.stage;
+    if (stage === 'download' && li.dataset.pct) return; // у скачивания есть свой процент
+    const label = (STAGES[stage] || {}).label || 'Работаю';
+    li.querySelector('.stage').textContent = label + ' · ' + fmtElapsed(Date.now() - I.stageAt);
+  }
+
+  function updateOverall() {
+    const I = S.install;
+    const total = I.keys.length || 1;
+    const sum = I.keys.reduce((acc, k) => acc + (I.states[k] ? 1 : (I.frac[k] || 0)), 0);
+    const pct = Math.min(99, Math.round(100 * sum / total));
+    $('installPct').textContent = pct + '%';
+    $('installBar').style.width = Math.max(2, pct) + '%';
+    const done = Object.keys(I.states).length;
+    $('installSub').textContent = 'Готово ' + done + ' из ' + total + ' ' + plural(total, 'драйвера', 'драйверов', 'драйверов');
   }
 
   function onProgress(d) {
-    if (!S.install) return;
-    if (d.state === 'cleanup') { $('installStep').textContent = 'Удаляю установочные файлы…'; return; }
+    const I = S.install;
+    if (!I) return;
+    if (d.state === 'cleanup') {
+      $('installStep').textContent = 'Удаляю скачанные установочные файлы…';
+      return;
+    }
     const li = $('installList').querySelector('li[data-key="' + CSS.escape(d.key) + '"]');
     if (!li) return;
-    li.dataset.state = d.state;
-    li.querySelector('.msg').textContent = d.message;
+    const name = li.querySelector('.nm').textContent;
     const st = li.querySelector('.st');
-    st.replaceChildren(d.state === 'ok' ? icon('check') : d.state === 'error' ? icon('x') : '');
-    if (d.state === 'running') $('installStep').textContent = li.querySelector('.nm').textContent + ' — ' + d.message;
-    if (d.state === 'ok' || d.state === 'error') S.install.states[d.key] = d.state;
-    const done = Object.keys(S.install.states).length;
-    $('installBar').style.width = Math.max(3, Math.round(100 * done / S.install.keys.length)) + '%';
+    const bar = li.querySelector('.mini > span');
+    li.dataset.state = d.state;
+
+    if (d.state === 'ok' || d.state === 'error') {
+      I.states[d.key] = d.state;
+      li.querySelector('.stage').textContent = d.state === 'ok' ? 'Готово' : 'Ошибка';
+      li.querySelector('.msg').textContent = d.message;
+      bar.style.width = '100%';
+      st.replaceChildren(icon(d.state === 'ok' ? 'check' : 'x'));
+      updateOverall();
+      return;
+    }
+    if (d.state === 'waiting') return;
+
+    // running
+    const stage = d.stage || 'install';
+    if (li.dataset.stage !== stage || I.current !== d.key) I.stageAt = Date.now();
+    I.current = d.key;
+    li.dataset.stage = stage;
+    st.replaceChildren();
+    const info = STAGES[stage] || STAGES.install;
+    const pct = typeof d.percent === 'number' ? Math.max(0, Math.min(100, d.percent)) : null;
+    if (pct !== null) li.dataset.pct = String(pct); else delete li.dataset.pct;
+    li.classList.toggle('indeterminate', pct === null);
+    bar.style.width = pct !== null ? pct + '%' : '';
+
+    // текст этапа: «Скачивание · 45%» или «Установка · 0:12»
+    let label = info.label;
+    if (pct !== null) label += ' · ' + Math.round(pct) + '%';
+    else label += ' · ' + fmtElapsed(Date.now() - I.stageAt);
+    li.querySelector('.stage').textContent = label;
+    let msg = d.message;
+    if (stage === 'download' && d.total) {
+      // скорость и оставшееся время по последним замерам
+      const now = Date.now();
+      const sp = I.speed && I.speed.key === d.key ? I.speed : (I.speed = { key: d.key, t: now, done: d.done || 0, bps: 0 });
+      const dt = (now - sp.t) / 1000;
+      if (dt >= 0.5) {
+        const inst = ((d.done || 0) - sp.done) / dt;
+        sp.bps = sp.bps ? sp.bps * 0.7 + inst * 0.3 : inst;
+        sp.t = now; sp.done = d.done || 0;
+      }
+      msg = fmtSize(d.done || 0) + ' из ' + fmtSize(d.total);
+      if (sp.bps > 0) {
+        const left = Math.max(0, (d.total - (d.done || 0)) / sp.bps);
+        msg += ' · ' + fmtSize(sp.bps) + '/с · осталось ~' + (left >= 60 ? Math.ceil(left / 60) + ' мин' : Math.ceil(left) + ' с');
+      }
+    }
+    li.querySelector('.msg').textContent = msg;
+    $('installStep').textContent = name + ' — ' + info.label.toLowerCase() + (pct !== null ? ' ' + Math.round(pct) + '%' : '');
+
+    I.frac[d.key] = info.from + (info.to - info.from) * ((pct ?? 0) / 100);
+    updateOverall();
   }
 
   function onInstallDone(d) {
+    if (S.install && S.install.timer) clearInterval(S.install.timer);
+    $('installPct').textContent = '100%';
+    $('installSub').textContent = '';
     $('installSpinner').classList.add('done');
     $('installSpinner').replaceChildren(icon(d.okCount ? 'check' : 'x'));
     $('installBar').style.width = '100%';
@@ -585,6 +682,7 @@
     progress: onProgress,
     install_done: onInstallDone,
     install_aborted: (d) => {
+      if (S.install && S.install.timer) clearInterval(S.install.timer);
       $('installer').hidden = true;
       S.install = null;
       modal({ tone: 'required', iconName: 'alert', title: 'Установка не начата', body: h('p', {}, d.message) });

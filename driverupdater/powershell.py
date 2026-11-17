@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+from typing import Callable
 
 PREAMBLE = r"""
 $ErrorActionPreference = 'Stop'
@@ -60,6 +62,33 @@ def _clean_error(text: str) -> str:
     parts = re.findall(r'<S S="Error">(.*?)</S>', text, re.S)
     msg = "".join(parts).replace("_x000D_", "").replace("_x000A_", "\n")
     return html.unescape(msg)
+
+
+def run_stream(script: str, on_event: Callable[[dict], None], timeout: int = 3600) -> str:
+    """Как run(), но строки вида «@@{json}» передаются в on_event сразу, пока скрипт работает.
+    Так длинные операции (Windows Update) сообщают о ходе работы."""
+    encoded = base64.b64encode((PREAMBLE + script).encode("utf-16-le")).decode("ascii")
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(
+            [_exe(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+            stdout=subprocess.PIPE, stderr=err, stdin=subprocess.DEVNULL, **NO_WINDOW)
+        rest = []
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if line.startswith("@@"):
+                try:
+                    on_event(json.loads(line[2:]))
+                except ValueError:
+                    pass
+            elif line:
+                rest.append(line)
+        code = proc.wait(timeout=timeout)
+        if code != 0:
+            err.seek(0)
+            raise PowerShellError(_clean_error(err.read().decode("utf-8", errors="replace")).strip()[-2000:]
+                                  or "\n".join(rest)[-2000:])
+    return "\n".join(rest)
 
 
 def run_json(script: str, timeout: int = 600):
