@@ -62,6 +62,25 @@ class NvidiaTests(unittest.TestCase):
             self.assertIsNone(nvidia.find_update(gpu(), SystemInfo(arch="x64"), "NVIDIA GeForce RTX 5060 Ti"))
 
 
+class VendorToolsTests(unittest.TestCase):
+    def test_amd_prefers_stable_over_beta(self):
+        from driverupdater.providers import vendor_tools as vt
+        page = ('<a href="https://drivers.amd.com/drivers/installer/26.20/beta/amd-software-adrenalin-edition-26.11.1-minimalsetup-261111_web.exe">'
+                '<a href="https://drivers.amd.com/drivers/installer/25.20/whql/amd-software-adrenalin-edition-25.10.2-minimalsetup-251030_web.exe">')
+
+        class Resp:
+            def read(self):
+                return page.encode()
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        with mock.patch("urllib.request.urlopen", return_value=Resp()):
+            link = vt.find_link(vt.TOOLS["amd"])
+        self.assertIn("/whql/", link)
+
+
 class NamesTests(unittest.TestCase):
     def test_brands(self):
         self.assertEqual(names.brand("Micro-Star International Co., Ltd."), "MSI")

@@ -64,10 +64,12 @@ def find_link(tool: Tool) -> str:
         return tool.page
     with urllib.request.urlopen(_request(tool.page, tool.referer), timeout=30) as resp:
         page = resp.read().decode("utf-8", errors="replace")
-    m = re.search(tool.link_re, page)
-    if not m:
+    links = re.findall(tool.link_re, page)
+    if not links:
         raise RuntimeError("на сайте производителя не нашлась ссылка на программу")
-    return m.group(0)
+    # На странице AMD есть и стабильная, и бета-версия — берём стабильную.
+    stable = [u for u in links if "/beta/" not in u.lower() and "preview" not in u.lower()]
+    return (stable or links)[0]
 
 
 def download(tool: Tool, dest: Path) -> Path:
