@@ -147,6 +147,13 @@ class WebAssetsTests(unittest.TestCase):
             self.assertIn(name, html)
         self.assertIn("<title>DriverUpdater</title>", html)  # проверяется в --selftest
 
+    def test_no_gpu_heavy_effects(self):
+        # На встроенных видеокартах размытие и бесконечные анимации грузили GPU до 98% в простое.
+        css = (WEB / "styles.css").read_text("utf-8")
+        self.assertNotIn("backdrop-filter", css)
+        self.assertNotIn("blur(", css)
+        self.assertIn(".paused", css)  # анимации на паузе, когда окно свёрнуто
+
     def test_webview2_absent_off_windows(self):
         self.assertIsInstance(webview2.runtime_version(), str)
 

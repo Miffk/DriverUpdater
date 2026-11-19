@@ -548,6 +548,7 @@
     }));
     $('installFoot').replaceChildren(h('span', { class: 'warn' }, icon('alert'), 'Не выключайте компьютер до окончания установки'));
     $('installer').hidden = false;
+    $('installCard').classList.add('running'); // блик на полосе — только пока идёт установка
     S.install.timer = setInterval(tickInstall, 1000);
   }
 
@@ -640,8 +641,13 @@
     updateOverall();
   }
 
-  function onInstallDone(d) {
+  function stopInstallAnimations() {
     if (S.install && S.install.timer) clearInterval(S.install.timer);
+    $('installCard').classList.remove('running');
+  }
+
+  function onInstallDone(d) {
+    stopInstallAnimations();
     $('installPct').textContent = '100%';
     $('installSub').textContent = '';
     $('installSpinner').classList.add('done');
@@ -681,6 +687,7 @@
       setStatus('Ошибка: ' + d.message, 'error');
       toast(d.message, 'error');
       if (S.install || !$('installer').hidden) {
+        stopInstallAnimations();
         $('installStep').textContent = 'Ошибка: ' + d.message;
         $('installFoot').replaceChildren(h('span', {}, ''), h('button', { class: 'btn', onclick: () => { $('installer').hidden = true; start(); } }, 'Закрыть'));
         S.install = null;
@@ -698,7 +705,7 @@
     progress: onProgress,
     install_done: onInstallDone,
     install_aborted: (d) => {
-      if (S.install && S.install.timer) clearInterval(S.install.timer);
+      stopInstallAnimations();
       $('installer').hidden = true;
       S.install = null;
       modal({ tone: 'required', iconName: 'alert', title: 'Установка не начата', body: h('p', {}, d.message) });
@@ -744,6 +751,10 @@
   // ───────── запуск ─────────
   function bindUi() {
     Icons.hydrate();
+    // Окно свёрнуто или закрыто другими окнами — ставим все анимации на паузу.
+    const syncPaused = () => document.documentElement.classList.toggle('paused', document.hidden);
+    document.addEventListener('visibilitychange', syncPaused);
+    syncPaused();
     $('btnRefresh').addEventListener('click', start);
     $('btnInstall').addEventListener('click', askInstall);
     $('dockInstall').addEventListener('click', askInstall);
